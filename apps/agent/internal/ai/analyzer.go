@@ -23,8 +23,8 @@ type Analysis struct {
 	Provenance  Provenance `json:"provenance,omitempty"`
 }
 
-// Provenance records how an analysis was produced. It must never include
-// API keys or other secrets.
+// Provenance 记录一次分析是如何产生的。绝不能包含
+// API key 或其他密钥。
 type Provenance struct {
 	Model         string `json:"model"`
 	ProviderHost  string `json:"providerHost"`
@@ -34,11 +34,11 @@ type Provenance struct {
 	AnalyzedAt    string `json:"analyzedAt"`
 }
 
-// ImageSkippedProviderMediaFetch records that a usable cover image was omitted
-// after the provider failed to fetch it (for example Wikimedia 403 / CDN 401).
+// ImageSkippedProviderMediaFetch 表示可用封面图因 provider 拉取失败
+// 而被省略（例如 Wikimedia 403 / CDN 401）。
 const (
 	ImageSkippedProviderMediaFetch = "provider-media-fetch"
-	// PromptVersion is bumped when the analysis system prompt changes.
+	// 分析用 system prompt 变更时递增 PromptVersion。
 	PromptVersion = "dca-analysis-v1"
 )
 

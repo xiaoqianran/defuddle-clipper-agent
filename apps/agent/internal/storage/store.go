@@ -91,9 +91,9 @@ func (s Store) NoteExists(paths Paths) bool {
 	return exists(paths.Note)
 }
 
-// DerivedComplete reports whether derived artifacts finished (success, failure, or
-// AI disabled). A pending marker means analysis is still in flight, so retries
-// and reprocess must be allowed to proceed.
+// DerivedComplete 报告派生产物是否已结束（成功、失败，或
+// AI 已关闭）。pending 标记表示分析仍在进行，因此必须允许
+// 重试和重新处理继续。
 func (s Store) DerivedComplete(paths Paths) bool {
 	return paths.Complete()
 }

@@ -1,54 +1,54 @@
-# References and upstream boundaries
+# 参考与上游边界
 
-This project is original glue/application code around upstream components and architectural ideas.
+本项目是围绕上游组件与架构思路编写的原创胶水/应用代码。
 
 ## Defuddle
 
-Repository: `kepano/defuddle`
+仓库：`kepano/defuddle`
 
-Role:
+角色：
 
-- direct npm dependency
-- rendered DOM extraction
-- metadata/Schema.org extraction
-- Markdown conversion through the full bundle
-- site-specific extractor variables
+- 直接的 npm 依赖
+- 已渲染 DOM 抽取
+- 元数据/Schema.org 抽取
+- 通过完整 bundle 做 Markdown 转换
+- 站点专用 extractor variables
 
-No Defuddle source is vendored here.
+这里没有 vendor 任何 Defuddle 源码。
 
 ## Obsidian Web Clipper
 
-Repository: `obsidianmd/obsidian-clipper`
+仓库：`obsidianmd/obsidian-clipper`
 
-Role: implementation reference for:
+角色：实现参考，用于：
 
-- browser extension capture lifecycle
-- Defuddle `parseAsync()` integration
-- selection/highlight concepts
+- 浏览器扩展捕获生命周期
+- Defuddle `parseAsync()` 集成
+- 选区/高亮概念
 - variables/templates
-- cross-browser product considerations
+- 跨浏览器产品考量
 
-This repository is not a fork of Obsidian Web Clipper.
+本仓库不是 Obsidian Web Clipper 的 fork。
 
 ## Atomic
 
-Repository: `kenforthewin/atomic`
+仓库：`kenforthewin/atomic`
 
-Role: architectural reference for:
+角色：架构参考，用于：
 
-- local-first capture
-- queued delivery
-- separating core business logic from transport/UI
-- future semantic search / MCP direction
+- 本地优先捕获
+- 排队投递
+- 把核心业务逻辑与传输/UI 分开
+- 未来的语义搜索 / MCP 方向
 
-Atomic code is not copied into this repository.
+Atomic 代码没有复制进本仓库。
 
 ## allan-deng/web_clipper
 
-Role: small reference confirming the practical extension → localhost service pattern.
+角色：小型参考，用于确认「扩展 → localhost 服务」这一实用模式。
 
-Its Readability/Turndown extraction stack is not used here because Defuddle is the extraction dependency.
+这里不使用它的 Readability/Turndown 抽取栈，因为抽取依赖是 Defuddle。
 
-## Dependency policy
+## 依赖策略
 
-Prefer using upstream projects through their public package/API boundaries. Fork only when a required change cannot reasonably be contributed upstream or implemented through composition.
+优先通过公开的 package/API 边界使用上游项目。只有当所需改动无法合理向上游贡献，也无法通过组合实现时，才考虑 fork。

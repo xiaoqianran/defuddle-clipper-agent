@@ -1,80 +1,80 @@
-# Security
+# 安全
 
-A web clipper bridges hostile web content and local files. Treat this boundary as security-sensitive.
+网页剪藏器连接的是敌意网页内容与本地文件。要把这条边界当作安全敏感面。
 
-## Threat model
+## 威胁模型
 
-Inputs include:
+输入包括：
 
-- arbitrary DOM text and metadata
-- arbitrary URLs
-- arbitrary Defuddle extractor variables
-- forged requests to localhost
-- malicious model output
-- malformed capture IDs
-- oversized request bodies
+- 任意 DOM 文本与元数据
+- 任意 URL
+- 任意 Defuddle extractor variables
+- 发往 localhost 的伪造请求
+- 恶意模型输出
+- 畸形的 capture ID
+- 过大的请求体
 
-## P0 controls
+## P0 控制
 
-### Loopback by default
+### 默认回环
 
-The server binds to:
+服务器绑定到：
 
 ```text
 127.0.0.1:27123
 ```
 
-If configured to bind to a non-loopback host, startup fails unless `DCA_TOKEN` is set.
+若配置为绑定非回环主机，则除非设置了 `DCA_TOKEN`，否则启动会失败。
 
-### Optional Bearer authentication
+### 可选的 Bearer 认证
 
-Set a long random `DCA_TOKEN`.
+设置一个足够长的随机 `DCA_TOKEN`。
 
-The extension sends:
+扩展会发送：
 
 ```text
 Authorization: Bearer <token>
 ```
 
-Do not reuse a cloud API key as this token.
+不要把云端 API key 复用为这个 token。
 
-### JSON-only endpoint
+### 仅 JSON 的端点
 
-`POST /v1/captures` requires JSON. The server does not add permissive CORS headers.
+`POST /v1/captures` 要求 JSON。服务器不会添加宽松的 CORS 头。
 
-### Bounded request body
+### 有界请求体
 
-`DCA_MAX_BODY_BYTES` defaults to 10 MiB.
+`DCA_MAX_BODY_BYTES` 默认为 10 MiB。
 
-### Path validation
+### 路径校验
 
-`captureId` is restricted to a short safe character set and is never treated as an arbitrary path.
+`captureId` 被限制在一组简短安全字符集内，绝不会被当作任意路径。
 
-### Atomic derived writes
+### 原子派生写入
 
-Files are written through temporary files and renamed into place to avoid partially written artifacts.
+文件通过临时文件写入，再重命名到位，以避免半写入产物。
 
-### Raw-first processing
+### 先落原始数据的处理
 
-An external model cannot prevent the source packet from being saved after the request is accepted.
+请求被接受后，外部模型无法阻止源 packet 被保存。
 
-### AI credentials stay local
+### AI 凭证留在本地
 
-Model/API credentials are environment variables of the local agent. They are never stored by the extension.
+模型/API 凭证是本地 agent 的环境变量。扩展从不存储它们。
 
-## Remaining risks
+## 仍存在的风险
 
-P0 does not:
+P0 不会：
 
-- encrypt the capture directory
-- sandbox model output
-- localize and inspect page assets
-- archive a cryptographically exact source page
-- authenticate individual browser extension IDs
-- provide OS-level process isolation
+- 加密捕获目录
+- 沙箱化模型输出
+- 本地化并检查页面资源
+- 归档密码学意义上完全一致的源页面
+- 认证单个浏览器扩展 ID
+- 提供操作系统级进程隔离
 
-Do not expose the HTTP server directly to the Internet.
+不要把 HTTP 服务器直接暴露到互联网。
 
-## Reporting
+## 报告
 
-For security issues, avoid posting secrets or exploit payloads containing private captured content in a public issue.
+对于安全问题，避免在公开 issue 中张贴密钥，或包含私人捕获内容的利用载荷。

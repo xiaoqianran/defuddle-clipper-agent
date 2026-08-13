@@ -1,77 +1,77 @@
 # AGENTS.md
 
-This repository is intentionally split by responsibility.
+本仓库按职责刻意拆分。
 
-## Product invariant
+## 产品不变量
 
-The browser extension is a **sensor/bridge**. The local desktop application is the **primary product UI**.
+浏览器扩展是 **传感器/桥接**。本地桌面应用才是 **主产品 UI**。
 
-Normal use should become:
+正常使用应变成：
 
 ```text
-browse normally
-→ page is captured automatically
-→ local desktop History/Reader updates
+正常浏览
+→ 页面被自动捕获
+→ 本地桌面 History/Reader 更新
 ```
 
-Do not optimize the product around a browser popup.
+不要围绕浏览器弹窗来优化产品。
 
-## Non-negotiable architecture rules
+## 不可妥协的架构规则
 
-1. `apps/extension` owns browser observation, Defuddle extraction, capture coordination and delivery only.
-2. The extension must become mostly headless; popup/manual capture is fallback/debug UI.
-3. Automatic capture must handle normal navigation and SPA navigation without producing duplicate floods.
-4. Reading, history, search, AI, files and future knowledge features belong in the local application/core.
-5. `apps/agent` contains the current Go core/localhost service. Future `apps/desktop` must reuse or extract this core rather than duplicate it.
-6. `packages/protocol/content-packet.schema.json` is the contract between browser and local core.
-7. Never make the extension write arbitrary local paths.
-8. Never make AI success a prerequisite for source persistence.
-9. Auto Capture and Auto AI are separate capabilities and settings.
-10. Do not copy Defuddle source into this repository. Consume it as an upstream dependency.
-11. Transport handlers must remain thin. Put business logic in services.
-12. Filesystem artifacts are the default durable source. Obsidian is optional and must never become a core dependency.
-13. Derived data (`analysis.json`, `note.md`, indexes, embeddings) must be regenerable from primary capture artifacts whenever practical.
-14. New protocol fields should be additive within `1.x`; breaking changes require a major protocol bump.
-15. Never log API keys, Bearer tokens, full raw HTML, or full AI request payloads.
+1. `apps/extension` 只负责浏览器观察、Defuddle 抽取、捕获协调与投递。
+2. 扩展应尽量无界面；弹窗/手动捕获只是回退/调试 UI。
+3. 自动捕获必须处理普通导航和 SPA 导航，且不能产生重复洪水。
+4. 阅读、历史、搜索、AI、文件以及未来的知识功能属于本地应用/核心。
+5. `apps/agent` 包含当前的 Go 核心/localhost 服务。未来的 `apps/desktop` 必须复用或抽出该核心，而不是再实现一份。
+6. `packages/protocol/content-packet.schema.json` 是浏览器与本地核心之间的契约。
+7. 绝不要让扩展写入任意本地路径。
+8. 绝不要把 AI 成功当作源内容持久化的前提。
+9. Auto Capture 与 Auto AI 是分开的能力与设置。
+10. 不要把 Defuddle 源码复制进本仓库。把它当作上游依赖来消费。
+11. 传输处理器必须保持很薄。业务逻辑放在 services 里。
+12. 文件系统产物是默认的持久源。Obsidian 可选，绝不能成为核心依赖。
+13. 派生数据（`analysis.json`、`note.md`、索引、embeddings）只要可行，就必须能从主捕获产物重新生成。
+14. 新的协议字段应在 `1.x` 内做加法；破坏性变更需要主版本协议升级。
+15. 绝不要记录 API key、Bearer token、完整原始 HTML，或完整的 AI 请求载荷。
 
-## Automatic capture rules
+## 自动捕获规则
 
-The capture coordinator should reason about meaningful page transitions, not arbitrary DOM changes.
+捕获协调器应判断有意义的页面转换，而不是任意 DOM 变化。
 
-Required concepts:
+必需概念：
 
-- active tab;
-- normal navigation;
-- SPA navigation (`pushState`, `replaceState`, `popstate`);
-- debounce / DOM stability;
-- canonical URL;
-- extracted-content fingerprint;
-- minimum dwell time where useful;
-- pause/resume;
-- allowlist/denylist;
-- retry queue.
+- 活动标签；
+- 普通导航；
+- SPA 导航（`pushState`、`replaceState`、`popstate`）；
+- debounce / DOM 稳定性；
+- 规范 URL；
+- 抽取内容指纹；
+- 在有用时设置最短停留时间；
+- 暂停/恢复；
+- 允许列表/拒绝列表；
+- 重试队列。
 
-Scrolling, ads, lazy widgets or unrelated DOM mutations must not create repeated captures.
+滚动、广告、懒加载小组件或不相关的 DOM 变动，不得产生重复捕获。
 
-## Desktop application direction
+## 桌面应用方向
 
-Preferred stack: Wails + Go + Svelte.
+首选技术栈：Wails + Go + Svelte。
 
-The desktop app should provide:
+桌面应用应提供：
 
-- History;
-- large Reader;
-- Follow Browser mode;
-- Archive All mode;
-- AI / Notes panel;
-- search;
-- capture/AI settings.
+- History；
+- 大尺寸 Reader；
+- Follow Browser 模式；
+- Archive All 模式；
+- AI / Notes 面板；
+- 搜索；
+- 捕获/AI 设置。
 
-The desktop app should own the local server lifecycle once it becomes the default distribution.
+一旦桌面应用成为默认分发形态，它就应拥有本地服务器的生命周期。
 
-## Commit convention
+## 提交约定
 
-Use Conventional Commits:
+使用 Conventional Commits：
 
 - `feat(extension): ...`
 - `feat(desktop): ...`
@@ -83,33 +83,33 @@ Use Conventional Commits:
 - `docs(architecture): ...`
 - `chore(ci): ...`
 
-Keep changes cohesive. Tests belong in the same commit as the behavior they verify.
+改动保持内聚。测试应与它们所验证的行为放在同一次提交中。
 
 ## Go
 
-- Standard library first unless a dependency materially improves the product.
-- Keep HTTP adapters focused on transport concerns.
-- Validate external input in protocol/core boundaries.
-- Use atomic file replacement for derived artifacts.
-- Refuse unsafe non-loopback defaults.
-- Always close response bodies.
-- Add timeouts to outbound HTTP.
-- Keep services reusable by both standalone agent and Wails desktop app.
+- 优先标准库，除非某依赖能实质提升产品。
+- HTTP 适配器只关注传输问题。
+- 在 protocol/core 边界校验外部输入。
+- 对派生产物使用原子文件替换。
+- 拒绝不安全的非回环默认值。
+- 始终关闭 response body。
+- 为出站 HTTP 添加超时。
+- 让 services 既能被独立 agent 复用，也能被 Wails 桌面应用复用。
 
-## TypeScript extension
+## TypeScript 扩展
 
-- MV3.
-- No heavy UI framework in the extension.
-- Content script observes/extracts; background service worker transports/retries and tracks tab-level state.
-- Keep API keys out of the extension. Only the local bridge token may be stored there.
-- Treat page DOM/content as hostile input.
-- Queue failed captures in `chrome.storage.local`.
-- Do not silently truncate source before constructing `ContentPacket`.
-- Prefer explicit navigation/fingerprint state machines over broad MutationObserver-driven recapture.
+- MV3。
+- 扩展中不要用沉重的 UI 框架。
+- Content script 负责观察/抽取；background service worker 负责传输/重试，并跟踪标签级状态。
+- API key 不要放在扩展里。那里只能存放本地桥接 token。
+- 把页面 DOM/内容当作敌意输入。
+- 把失败的捕获排入 `chrome.storage.local` 队列。
+- 在构造 `ContentPacket` 之前，不要静默截断源内容。
+- 优先使用显式的导航/指纹状态机，而不是靠宽泛的 MutationObserver 驱动重新捕获。
 
-## Testing
+## 测试
 
-Before merging browser/core changes:
+合并浏览器/核心变更之前：
 
 ```bash
 cd apps/agent && go test ./...
@@ -117,8 +117,8 @@ npm run typecheck
 npm run build
 ```
 
-Automatic capture work must add tests for navigation dedup/state transitions where practical.
+自动捕获相关工作只要可行，就必须为导航去重/状态转换补充测试。
 
-Desktop work must add its own build/test job to CI before it is considered complete.
+桌面工作在被视为完成之前，必须在 CI 中加入自己的构建/测试任务。
 
-If dependency installation is unavailable in an execution environment, do not claim a build passed; CI is the source of truth.
+若执行环境无法安装依赖，不要声称构建已通过；CI 才是事实来源。
