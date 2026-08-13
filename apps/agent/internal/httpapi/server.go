@@ -13,7 +13,10 @@ import (
 
 	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/browserstate"
 	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/capture"
+	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/events"
+	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/policy"
 	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/protocol"
+	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/sensor"
 )
 
 type Server struct {
@@ -22,12 +25,24 @@ type Server struct {
 	AIEnabled    bool
 	Captures     capture.Service
 	Browser      *browserstate.Store
+	Policy       *policy.Store
+	Events       *events.Hub
+	Sensor       *sensor.Store
 	Logger       *log.Logger
 }
 
 func (s Server) Handler() http.Handler {
 	if s.Browser == nil {
 		s.Browser = &browserstate.Store{}
+	}
+	if s.Policy == nil {
+		s.Policy = policy.Memory()
+	}
+	if s.Events == nil {
+		s.Events = events.NewHub()
+	}
+	if s.Sensor == nil {
+		s.Sensor = &sensor.Store{}
 	}
 
 	mux := http.NewServeMux()
@@ -38,6 +53,11 @@ func (s Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/captures/{captureID}/reprocess", s.auth(s.reprocessCapture))
 	mux.HandleFunc("POST /v1/browser/active", s.auth(s.activePage))
 	mux.HandleFunc("GET /v1/browser/state", s.auth(s.browserState))
+	mux.HandleFunc("GET /v1/policy", s.auth(s.getPolicy))
+	mux.HandleFunc("PUT /v1/policy", s.auth(s.putPolicy))
+	mux.HandleFunc("GET /v1/status", s.auth(s.status))
+	mux.HandleFunc("POST /v1/sensor/heartbeat", s.auth(s.sensorHeartbeat))
+	mux.HandleFunc("GET /v1/events", s.auth(s.streamEvents))
 	return s.logging(mux)
 }
 
@@ -120,7 +140,9 @@ func (s Server) activePage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, s.Browser.Set(page))
+	state := s.Browser.Set(page)
+	s.Events.Publish(events.Event{Type: events.BrowserActive})
+	writeJSON(w, http.StatusOK, state)
 }
 
 func (s Server) browserState(w http.ResponseWriter, _ *http.Request) {
@@ -144,6 +166,10 @@ func (s Server) auth(next http.HandlerFunc) http.HandlerFunc {
 
 func (s Server) logging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/events" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		start := time.Now()
 		next.ServeHTTP(w, r)
 		s.logf("%s %s %s", r.Method, r.URL.Path, time.Since(start).Round(time.Millisecond))

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/ai"
 	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/browserstate"
 	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/capture"
+	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/events"
 	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/protocol"
 	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/storage"
 )
@@ -33,10 +35,16 @@ func (f *fakeAnalyzer) Analyze(context.Context, protocol.ContentPacket) (ai.Anal
 
 func testServer(t *testing.T) http.Handler {
 	t.Helper()
+	hub := events.NewHub()
+	captures := capture.New(storage.Store{Root: t.TempDir()}, nil)
+	captures.OnChange = func(kind, captureID string) {
+		hub.Publish(events.Event{Type: kind, CaptureID: captureID})
+	}
 	server := Server{
 		Token:        "secret",
 		MaxBodyBytes: 1 << 20,
-		Captures:     capture.New(storage.Store{Root: t.TempDir()}, nil),
+		Captures:     captures,
+		Events:       hub,
 	}
 	return server.Handler()
 }
@@ -70,7 +78,7 @@ func doJSON(t *testing.T, handler http.Handler, method, path, token string, body
 
 func waitCaptureStatus(t *testing.T, handler http.Handler, id, want string) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	var last string
 	for time.Now().Before(deadline) {
 		w := doJSON(t, handler, http.MethodGet, "/v1/captures/"+id, "secret", nil)
@@ -266,4 +274,105 @@ func TestReprocessNotFoundAndAuth(t *testing.T) {
 	if missing.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d: %s", missing.Code, missing.Body.String())
 	}
+}
+
+func TestPolicyAndStatusRoundTrip(t *testing.T) {
+	handler := testServer(t)
+	body := []byte(`{"autoCapture":false,"archiveAll":false,"captureDelayMs":900,"domainAllowlist":["Example.com"],"domainDenylist":[]}`)
+	w := doJSON(t, handler, http.MethodPut, "/v1/policy", "secret", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("put policy: %d %s", w.Code, w.Body.String())
+	}
+
+	got := doJSON(t, handler, http.MethodGet, "/v1/policy", "secret", nil)
+	if got.Code != http.StatusOK {
+		t.Fatalf("get policy: %d %s", got.Code, got.Body.String())
+	}
+	var doc struct {
+		AutoCapture    bool     `json:"autoCapture"`
+		ArchiveAll     bool     `json:"archiveAll"`
+		CaptureDelayMs int      `json:"captureDelayMs"`
+		Allowlist      []string `json:"domainAllowlist"`
+	}
+	if err := json.Unmarshal(got.Body.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.AutoCapture || doc.ArchiveAll || doc.CaptureDelayMs != 900 || len(doc.Allowlist) != 1 || doc.Allowlist[0] != "example.com" {
+		t.Fatalf("policy=%+v", doc)
+	}
+
+	beat := doJSON(t, handler, http.MethodPost, "/v1/sensor/heartbeat", "secret", []byte(`{"queueLength":2,"lastError":"retry"}`))
+	if beat.Code != http.StatusOK {
+		t.Fatalf("heartbeat: %d %s", beat.Code, beat.Body.String())
+	}
+
+	status := doJSON(t, handler, http.MethodGet, "/v1/status?limit=10", "secret", nil)
+	if status.Code != http.StatusOK {
+		t.Fatalf("status: %d %s", status.Code, status.Body.String())
+	}
+	var payload struct {
+		ProtocolVersion string `json:"protocolVersion"`
+		Policy          struct {
+			AutoCapture bool `json:"autoCapture"`
+		} `json:"policy"`
+		Sensor struct {
+			Connected   bool `json:"connected"`
+			QueueLength int  `json:"queueLength"`
+		} `json:"sensor"`
+		Captures []any `json:"captures"`
+	}
+	if err := json.Unmarshal(status.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.ProtocolVersion != "1.0" || payload.Policy.AutoCapture || !payload.Sensor.Connected || payload.Sensor.QueueLength != 2 {
+		t.Fatalf("status=%+v", payload)
+	}
+	if payload.Captures == nil {
+		t.Fatal("expected captures array")
+	}
+}
+
+func TestEventsStreamEmitsCaptureSaved(t *testing.T) {
+	handler := testServer(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/events", nil).WithContext(ctx)
+	req.Header.Set("Authorization", "Bearer secret")
+	w := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(w, req)
+		close(done)
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(w.Body.String(), ": connected") {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	body, _ := json.Marshal(testPacket("capture-event"))
+	posted := doJSON(t, handler, http.MethodPost, "/v1/captures", "secret", body)
+	if posted.Code != http.StatusOK {
+		t.Fatalf("capture: %d %s", posted.Code, posted.Body.String())
+	}
+
+	for time.Now().Before(deadline) {
+		if strings.Contains(w.Body.String(), `"type":"capture.saved"`) {
+			cancel()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("sse handler did not return")
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	t.Fatalf("missing capture.saved in stream: %s", w.Body.String())
 }

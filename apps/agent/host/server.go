@@ -10,8 +10,11 @@ import (
 	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/ai"
 	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/capture"
 	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/config"
+	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/events"
 	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/httpapi"
+	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/policy"
 	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/protocol"
+	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/sensor"
 	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/storage"
 )
 
@@ -52,11 +55,24 @@ func New(logger *log.Logger) (*Server, error) {
 	captures := capture.New(storage.Store{Root: cfg.DataDir}, analyzer)
 	captures.Logger = logger
 
+	hub := events.NewHub()
+	captures.OnChange = func(kind, captureID string) {
+		hub.Publish(events.Event{Type: kind, CaptureID: captureID})
+	}
+
+	pol, err := policy.Load(cfg.DataDir)
+	if err != nil {
+		return nil, err
+	}
+
 	api := httpapi.Server{
 		Token:        cfg.Token,
 		MaxBodyBytes: cfg.MaxBodyBytes,
 		AIEnabled:    cfg.AI.Enabled,
 		Captures:     captures,
+		Policy:       pol,
+		Events:       hub,
+		Sensor:       &sensor.Store{},
 		Logger:       logger,
 	}
 

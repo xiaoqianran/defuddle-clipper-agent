@@ -12,10 +12,14 @@ import (
 	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/storage"
 )
 
+// ChangeFunc 在源捕获或派生产物变化时通知控制面（例如 SSE）。
+type ChangeFunc func(kind, captureID string)
+
 type Service struct {
 	Store    storage.Store
 	Analyzer ai.Analyzer
 	Logger   *log.Logger
+	OnChange ChangeFunc
 	jobs     *jobSet
 }
 
@@ -51,6 +55,7 @@ func (s Service) Process(ctx context.Context, packet protocol.ContentPacket) (Re
 	}
 
 	if existed && s.Store.DerivedComplete(paths) {
+		s.notify("capture.saved", packet.CaptureID)
 		return Result{
 			CaptureID: packet.CaptureID,
 			NotePath:  absNote(paths.Note),
@@ -59,7 +64,11 @@ func (s Service) Process(ctx context.Context, packet protocol.ContentPacket) (Re
 		}, nil
 	}
 
-	return s.startDerived(ctx, packet, paths)
+	result, err := s.startDerived(ctx, packet, paths)
+	if err == nil {
+		s.notify("capture.saved", packet.CaptureID)
+	}
+	return result, err
 }
 
 func (s Service) Reprocess(ctx context.Context, captureID string) (Result, error) {
@@ -127,6 +136,14 @@ func (s Service) runAnalysis(ctx context.Context, packet protocol.ContentPacket,
 	note := render.Markdown(packet, analysis, aiErr)
 	if err := s.Store.WriteDerived(paths, analysis, aiErr, note); err != nil {
 		s.logf("write derived for %s failed: %v", packet.CaptureID, err)
+		return
+	}
+	s.notify("capture.updated", packet.CaptureID)
+}
+
+func (s Service) notify(kind, captureID string) {
+	if s.OnChange != nil {
+		s.OnChange(kind, captureID)
 	}
 }
 
