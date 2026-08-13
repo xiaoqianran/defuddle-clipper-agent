@@ -1,6 +1,6 @@
-# Windows 原生打包：Wails 桌面阅读器 + 独立 clipper-agent.exe。
+# Windows 原生打包：Wails 桌面阅读器（内嵌 agent 生命周期）+ 独立 clipper-agent.exe。
 # 不在 pull_request 上运行，以节省 Windows runner 分钟数。
-# 桌面 exe 不内嵌 agent；完整安装仍需本机 agent + 浏览器扩展。
+# 桌面 exe 启动即带本地捕获 HTTP 服务；独立 clipper-agent.exe 仍可用于无界面场景。
 
 name: Windows Desktop
 

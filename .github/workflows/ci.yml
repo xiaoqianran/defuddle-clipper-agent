@@ -45,6 +45,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22.x'
-          cache-dependency-path: apps/desktop/go.mod
+          cache-dependency-path: |
+            apps/desktop/go.mod
+            apps/agent/go.mod
       - run: go test -tags dcatest ./...
       - run: go vet -tags dcatest ./...

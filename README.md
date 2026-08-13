@@ -13,7 +13,7 @@ Defuddle
     ↓
 ContentPacket v1
     ↓ localhost
-Go 本地 agent
+Go 本地 agent（独立进程，或嵌入桌面）
     ├─ 持久归档
     ├─ 当前浏览器状态
     ├─ History / Reader API
@@ -81,16 +81,16 @@ Wails + Svelte 桌面应用
 - 实时活动浏览器状态
 - 桌面前端已纳入根目录 npm typecheck/build CI
 - Windows 原生 Wails 打包 CI（Actions artifact `windows-amd64`）
+- 桌面进程嵌入/复用 Go agent 运行时：双击 exe 即启动本地捕获 HTTP 服务；若本机已有 clipper-agent 在跑则复用
 
 P2 内仍计划：
 
-- 将 Go agent 生命周期嵌入桌面进程
 - 渲染后的 Markdown / 清洗后的 HTML 模式
 - 桌面端对 Auto Capture 与队列状态的控制
 - 归档与 AI 的桌面设置
 - macOS / Linux 原生打包 CI
 
-目前桌面应用连接独立运行的本地 agent。这样在嵌入式运行时重构期间，UI/数据边界可以保持稳定。
+桌面 UI 仍通过 HTTP 客户端访问 `http://127.0.0.1:27123`（可用 `DCA_AGENT_URL` 覆盖，仅回环）。捕获/AI 逻辑继续复用 `apps/agent`，不在 Svelte 里再实现一套。
 
 ## 仓库布局
 
@@ -132,11 +132,17 @@ apps/extension/dist
 apps/desktop/frontend/dist
 ```
 
-### 2. 启动本地 agent
+### 2. 本地捕获端点
 
-要求：Go 1.22+。
+默认端点：
 
-打开一个 PowerShell 窗口：
+```text
+http://127.0.0.1:27123
+```
+
+**日常使用：启动桌面应用即可。** 桌面会在进程内启动同一套 Go agent（`DCA_ADDR` 默认 `127.0.0.1:27123`）。若该地址上已经有本 agent 在跑（`GET /health` 返回 `protocolVersion` `1.0`），桌面会复用它，而不会再绑一次端口。关闭桌面时，也只会停掉**本进程启动**的服务器，不会杀掉你单独开的 `clipper-agent`。
+
+无界面/脚本场景仍可单独跑 agent（Go 1.22+）：
 
 ```powershell
 cd apps/agent
@@ -147,13 +153,7 @@ $env:DCA_TOKEN="replace-with-a-long-random-token"
 go run ./cmd/clipper-agent
 ```
 
-默认端点：
-
-```text
-http://127.0.0.1:27123
-```
-
-在另一个 PowerShell 中做健康检查：
+健康检查：
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:27123/health
@@ -188,18 +188,18 @@ Follow Browser: ON
 
 ### 4. 启动大尺寸桌面 Reader
 
-在仓库中再开一个 PowerShell：
+桌面启动即带本地 agent。环境变量与独立 agent 相同（`DCA_ADDR`、`DCA_DATA_DIR`、`DCA_TOKEN`、`DCA_AI_*`、`DCA_OPENAI_*`）。`DCA_AGENT_URL` 仍给桌面 HTTP 客户端用（仅回环，默认 `http://127.0.0.1:27123`）；若桌面自己启动了服务器，客户端会改连实际绑定地址。
 
 ```powershell
 cd apps/desktop
 
+$env:DCA_DATA_DIR="$HOME\dca-data"
 $env:DCA_TOKEN="replace-with-a-long-random-token"
 
-go mod tidy
 go run .
 ```
 
-桌面窗口从同一个本地 agent 读取数据。
+Windows GUI 子系统下，启动/绑定错误会写入 `DCA_DATA_DIR\desktop.log`（若未设置数据目录，则写到 `%USERPROFILE%\.defuddle-clipper-agent\desktop.log`）。
 
 若要做 Wails 热重载开发，请安装已锁定的兼容 CLI：
 
@@ -212,7 +212,7 @@ wails dev
 
 ## Windows 打包
 
-桌面阅读器可用 Wails CLI 打成 Windows exe。打包 **不会** 把 Go agent 嵌进桌面进程。
+桌面阅读器可用 Wails CLI 打成 Windows exe。`defuddle-browser-mirror.exe` **已内嵌** Go agent 生命周期：双击即可监听 `127.0.0.1:27123`。Windows 打包产物仍可附带独立 `clipper-agent.exe`，供无界面或已有 agent 在跑时使用。
 
 本地（PowerShell）：
 
@@ -230,15 +230,14 @@ apps/desktop/build/bin/defuddle-browser-mirror.exe
 
 GitHub Actions：推送到 `main`、推送 `v*` 标签、或手动 `workflow_dispatch` 会运行 `.github/workflows/windows-desktop.yml`。到仓库 **Actions** 页打开对应 run，下载 `windows-amd64` artifact。其中包含：
 
-- `defuddle-browser-mirror.exe`（Wails 桌面阅读器）
-- `clipper-agent.exe`（独立 Go agent）
+- `defuddle-browser-mirror.exe`（Wails 桌面阅读器，内嵌本地捕获 HTTP 服务）
+- `clipper-agent.exe`（独立 Go agent，可选，无界面场景）
 - 若 runner 上 NSIS 可用，还会有安装包
 
-完整使用仍需三件套，桌面 exe 只是阅读器：
+完整使用：
 
-1. 本机先跑 `clipper-agent.exe`（`DCA_DATA_DIR`、`DCA_TOKEN` 等环境变量与开发时相同；默认 `http://127.0.0.1:27123`）
-2. 浏览器中另行加载扩展（`apps/extension/dist`）
-3. 再打开 `defuddle-browser-mirror.exe`
+1. 打开 `defuddle-browser-mirror.exe`（若本机已有 `clipper-agent.exe` 在跑则复用）
+2. 浏览器中另行加载扩展（`apps/extension/dist`），Agent URL 仍为 `http://127.0.0.1:27123`
 
 Windows 10+ 通常已自带 WebView2 Runtime，构建机与最终用户一般不必再装自定义 bootstrapper。若个别机器缺少 WebView2，从 Microsoft 安装官方运行时即可。
 
