@@ -1,8 +1,9 @@
 import { build } from 'esbuild';
 import { copyFile, mkdir, rm } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const here = new URL('.', import.meta.url).pathname;
+const here = dirname(fileURLToPath(import.meta.url));
 const outdir = resolve(here, 'dist');
 
 await rm(outdir, { recursive: true, force: true });

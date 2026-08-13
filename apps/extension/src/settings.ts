@@ -1,12 +1,17 @@
-export interface ExtensionSettings {
-  agentUrl: string;
-  authToken: string;
-  includeHtml: boolean;
+export interface CapturePolicy {
+  revision?: number;
   autoCapture: boolean;
-  followBrowser: boolean;
+  archiveAll: boolean;
   captureDelayMs: number;
   domainAllowlist: string[];
   domainDenylist: string[];
+}
+
+export interface ExtensionSettings extends CapturePolicy {
+  agentUrl: string;
+  authToken: string;
+  includeHtml: boolean;
+  followBrowser: boolean;
 }
 
 export const DEFAULT_SETTINGS: ExtensionSettings = {
@@ -14,6 +19,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   authToken: '',
   includeHtml: false,
   autoCapture: true,
+  archiveAll: true,
   followBrowser: true,
   captureDelayMs: 1200,
   domainAllowlist: [],
@@ -21,6 +27,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
 };
 
 const KEY = 'dca.settings';
+const REMOTE_POLICY_KEY = 'dca.remotePolicy';
 const MIN_CAPTURE_DELAY_MS = 250;
 const MAX_CAPTURE_DELAY_MS = 30_000;
 
@@ -62,16 +69,42 @@ export function isDomainAllowed(rawUrl: string, settings: ExtensionSettings): bo
   return true;
 }
 
-export async function loadSettings(): Promise<ExtensionSettings> {
-  const result = await chrome.storage.sync.get(KEY);
-  const stored = (result[KEY] ?? {}) as Partial<ExtensionSettings>;
+function fromStored(stored: Partial<ExtensionSettings>): ExtensionSettings {
   return {
     ...DEFAULT_SETTINGS,
     ...stored,
+    archiveAll: stored.archiveAll ?? DEFAULT_SETTINGS.archiveAll,
     captureDelayMs: clampCaptureDelay(stored.captureDelayMs ?? DEFAULT_SETTINGS.captureDelayMs),
     domainAllowlist: normalizeDomainList(stored.domainAllowlist ?? []),
     domainDenylist: normalizeDomainList(stored.domainDenylist ?? [])
   };
+}
+
+function applyPolicy(base: ExtensionSettings, policy: Partial<CapturePolicy> | undefined): ExtensionSettings {
+  if (!policy) return base;
+  return {
+    ...base,
+    autoCapture: policy.autoCapture ?? base.autoCapture,
+    archiveAll: policy.archiveAll ?? base.archiveAll,
+    captureDelayMs: clampCaptureDelay(policy.captureDelayMs ?? base.captureDelayMs),
+    domainAllowlist: normalizeDomainList(policy.domainAllowlist ?? base.domainAllowlist),
+    domainDenylist: normalizeDomainList(policy.domainDenylist ?? base.domainDenylist)
+  };
+}
+
+export async function loadLocalSettings(): Promise<ExtensionSettings> {
+  const result = await chrome.storage.sync.get(KEY);
+  return fromStored((result[KEY] ?? {}) as Partial<ExtensionSettings>);
+}
+
+export async function cacheRemotePolicy(policy: CapturePolicy): Promise<void> {
+  await chrome.storage.local.set({ [REMOTE_POLICY_KEY]: policy });
+}
+
+export async function loadSettings(): Promise<ExtensionSettings> {
+  const local = await loadLocalSettings();
+  const remote = await chrome.storage.local.get(REMOTE_POLICY_KEY);
+  return applyPolicy(local, remote[REMOTE_POLICY_KEY] as Partial<CapturePolicy> | undefined);
 }
 
 export async function saveSettings(settings: ExtensionSettings): Promise<void> {

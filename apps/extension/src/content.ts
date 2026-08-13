@@ -3,7 +3,7 @@ import { createMarkdownContent } from 'defuddle/full';
 import { canonicalizeUrl, CaptureTrigger, contentFingerprint, shouldAutoCapture } from './capture-policy';
 import { waitForDOMStability } from './dom-stability';
 import { ContentPacket, PROTOCOL_VERSION } from './protocol';
-import { loadSettings } from './settings';
+import { isDomainAllowed, isSupportedPageUrl, loadSettings } from './settings';
 
 let captureGeneration = 0;
 let scheduleTimer: number | undefined;
@@ -21,8 +21,18 @@ function stringVariable(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value : undefined;
 }
 
+async function effectiveSettings() {
+  try {
+    const remote = await chrome.runtime.sendMessage({ type: 'DCA_EFFECTIVE_SETTINGS' });
+    if (remote && typeof remote === 'object' && remote.agentUrl) return remote;
+  } catch {
+    // service worker 可能刚醒，回退到本地设置。
+  }
+  return loadSettings();
+}
+
 async function extractPacket(trigger: CaptureTrigger): Promise<ContentPacket> {
-  const settings = await loadSettings();
+  const settings = await effectiveSettings();
   const sourceUrl = location.href;
   const parser = new Defuddle(document, { url: sourceUrl });
 
@@ -78,7 +88,7 @@ async function extractPacket(trigger: CaptureTrigger): Promise<ContentPacket> {
 }
 
 async function runAutoCapture(generation: number, trigger: CaptureTrigger): Promise<void> {
-  const settings = await loadSettings();
+  const settings = await effectiveSettings();
   if (generation !== captureGeneration || !shouldAutoCapture(location.href, settings)) return;
 
   await waitForDOMStability();
@@ -98,7 +108,7 @@ function scheduleAutoCapture(trigger: CaptureTrigger): void {
   const generation = ++captureGeneration;
   if (scheduleTimer !== undefined) window.clearTimeout(scheduleTimer);
 
-  void loadSettings().then(settings => {
+  void effectiveSettings().then(settings => {
     if (generation !== captureGeneration || !shouldAutoCapture(location.href, settings)) return;
     scheduleTimer = window.setTimeout(() => void runAutoCapture(generation, trigger), settings.captureDelayMs);
   });
@@ -106,8 +116,8 @@ function scheduleAutoCapture(trigger: CaptureTrigger): void {
 
 async function reportActivePage(): Promise<void> {
   if (document.visibilityState !== 'visible') return;
-  const settings = await loadSettings();
-  if (!settings.followBrowser || !shouldAutoCapture(location.href, { ...settings, autoCapture: true })) return;
+  const settings = await effectiveSettings();
+  if (!settings.followBrowser || !isSupportedPageUrl(location.href) || !isDomainAllowed(location.href, settings)) return;
 
   const signature = `${location.href}\n${document.title}`;
   if (signature === lastActiveSignature) return;

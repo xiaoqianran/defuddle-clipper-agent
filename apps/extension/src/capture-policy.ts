@@ -32,5 +32,5 @@ export function contentFingerprint(canonicalUrl: string, markdown: string): stri
 }
 
 export function shouldAutoCapture(url: string, settings: ExtensionSettings): boolean {
-  return settings.autoCapture && isDomainAllowed(url, settings);
+  return settings.autoCapture && settings.archiveAll !== false && isDomainAllowed(url, settings);
 }

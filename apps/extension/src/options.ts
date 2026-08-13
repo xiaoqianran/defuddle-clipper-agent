@@ -4,6 +4,7 @@ const agentUrl = document.getElementById('agentUrl') as HTMLInputElement;
 const authToken = document.getElementById('authToken') as HTMLInputElement;
 const includeHtml = document.getElementById('includeHtml') as HTMLInputElement;
 const autoCapture = document.getElementById('autoCapture') as HTMLInputElement;
+const archiveAll = document.getElementById('archiveAll') as HTMLInputElement;
 const followBrowser = document.getElementById('followBrowser') as HTMLInputElement;
 const captureDelayMs = document.getElementById('captureDelayMs') as HTMLInputElement;
 const domainAllowlist = document.getElementById('domainAllowlist') as HTMLTextAreaElement;
@@ -20,6 +21,7 @@ void loadSettings().then(settings => {
   authToken.value = settings.authToken;
   includeHtml.checked = settings.includeHtml;
   autoCapture.checked = settings.autoCapture;
+  archiveAll.checked = settings.archiveAll;
   followBrowser.checked = settings.followBrowser;
   captureDelayMs.value = String(settings.captureDelayMs);
   domainAllowlist.value = settings.domainAllowlist.join('\n');
@@ -34,16 +36,28 @@ save.addEventListener('click', () => {
       return;
     }
 
-    await saveSettings({
+    const settings = {
       agentUrl: url,
       authToken: authToken.value,
       includeHtml: includeHtml.checked,
       autoCapture: autoCapture.checked,
+      archiveAll: archiveAll.checked,
       followBrowser: followBrowser.checked,
       captureDelayMs: clampCaptureDelay(Number(captureDelayMs.value)),
       domainAllowlist: parseDomains(domainAllowlist.value),
       domainDenylist: parseDomains(domainDenylist.value)
+    };
+    await saveSettings(settings);
+    await chrome.runtime.sendMessage({
+      type: 'DCA_PUSH_POLICY',
+      policy: {
+        autoCapture: settings.autoCapture,
+        archiveAll: settings.archiveAll,
+        captureDelayMs: settings.captureDelayMs,
+        domainAllowlist: settings.domainAllowlist,
+        domainDenylist: settings.domainDenylist
+      }
     });
-    status.textContent = 'Saved. New navigation will use these settings.';
+    status.textContent = 'Saved. Desktop policy updated when the local app is running.';
   })();
 });

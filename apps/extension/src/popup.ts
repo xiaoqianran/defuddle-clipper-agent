@@ -27,9 +27,11 @@ async function activeTab(): Promise<chrome.tabs.Tab> {
 toggleButton.addEventListener('click', () => {
   void (async () => {
     const settings = await loadSettings();
-    await saveSettings({ ...settings, autoCapture: !settings.autoCapture });
+    const autoCapture = !settings.autoCapture;
+    await saveSettings({ ...settings, autoCapture });
+    await chrome.runtime.sendMessage({ type: 'DCA_PUSH_POLICY', policy: { autoCapture } });
     await refreshMode();
-    status(settings.autoCapture ? 'Automatic capture paused.' : 'Automatic capture resumed.');
+    status(autoCapture ? 'Automatic capture resumed.' : 'Automatic capture paused. Desktop can resume it.');
   })();
 });
 

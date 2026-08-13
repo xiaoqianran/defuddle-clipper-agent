@@ -1,5 +1,12 @@
 import { ContentPacket, SubmitResult } from './protocol';
-import { isSupportedPageUrl, loadSettings } from './settings';
+import {
+  cacheRemotePolicy,
+  CapturePolicy,
+  isSupportedPageUrl,
+  loadLocalSettings,
+  loadSettings,
+  saveSettings
+} from './settings';
 
 const QUEUE_KEY = 'dca.pendingCaptures';
 const SEEN_KEY = 'dca.seenCaptures';
@@ -34,6 +41,7 @@ async function readQueue(): Promise<PendingCapture[]> {
 
 async function writeQueue(queue: PendingCapture[]): Promise<void> {
   await chrome.storage.local.set({ [QUEUE_KEY]: queue.slice(-MAX_QUEUE) });
+  void sendHeartbeat(queue.length, queue.at(-1)?.lastError);
 }
 
 async function readSeen(): Promise<SeenCapture[]> {
@@ -169,11 +177,71 @@ async function postActivePage(page: ActivePage, sender: chrome.runtime.MessageSe
   }
 }
 
+async function refreshRemotePolicy(): Promise<CapturePolicy | undefined> {
+  const settings = await loadLocalSettings();
+  try {
+    const response = await fetch(`${settings.agentUrl.replace(/\/+$/, '')}/v1/policy`, {
+      headers: await authHeaders()
+    });
+    if (!response.ok) return undefined;
+    const policy = (await response.json()) as CapturePolicy;
+    await cacheRemotePolicy(policy);
+    return policy;
+  } catch {
+    return undefined;
+  }
+}
+
+async function pushPolicy(partial: Partial<CapturePolicy>): Promise<CapturePolicy | undefined> {
+  const current = await loadSettings();
+  const next: CapturePolicy = {
+    autoCapture: partial.autoCapture ?? current.autoCapture,
+    archiveAll: partial.archiveAll ?? current.archiveAll,
+    captureDelayMs: partial.captureDelayMs ?? current.captureDelayMs,
+    domainAllowlist: partial.domainAllowlist ?? current.domainAllowlist,
+    domainDenylist: partial.domainDenylist ?? current.domainDenylist
+  };
+  const settings = await loadLocalSettings();
+  try {
+    const response = await fetch(`${settings.agentUrl.replace(/\/+$/, '')}/v1/policy`, {
+      method: 'PUT',
+      headers: await authHeaders(true),
+      body: JSON.stringify(next)
+    });
+    if (!response.ok) return undefined;
+    const policy = (await response.json()) as CapturePolicy;
+    await cacheRemotePolicy(policy);
+    return policy;
+  } catch {
+    return undefined;
+  }
+}
+
+async function sendHeartbeat(queueLength?: number, lastError?: string): Promise<void> {
+  const settings = await loadLocalSettings();
+  const queue = queueLength === undefined ? (await readQueue()).length : queueLength;
+  try {
+    await fetch(`${settings.agentUrl.replace(/\/+$/, '')}/v1/sensor/heartbeat`, {
+      method: 'POST',
+      headers: await authHeaders(true),
+      body: JSON.stringify({
+        queueLength: queue,
+        lastError: lastError || undefined,
+        version: chrome.runtime.getManifest().version
+      })
+    });
+  } catch {
+    // 心跳失败不影响捕获队列。
+  }
+}
+
 async function health(): Promise<{ ok: boolean; error?: string }> {
-  const settings = await loadSettings();
+  const settings = await loadLocalSettings();
   try {
     const response = await fetch(`${settings.agentUrl.replace(/\/+$/, '')}/health`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    void refreshRemotePolicy();
+    void sendHeartbeat();
     return { ok: true };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -198,7 +266,11 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 chrome.alarms.onAlarm.addListener(alarm => {
-  if (alarm.name === RETRY_ALARM) void retryQueue();
+  if (alarm.name === RETRY_ALARM) {
+    void retryQueue();
+    void refreshRemotePolicy();
+    void sendHeartbeat();
+  }
 });
 
 chrome.webNavigation.onHistoryStateUpdated.addListener(details => {
@@ -241,6 +313,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message?.type === 'DCA_RETRY_QUEUE') {
     void retryQueue().then(() => sendResponse({ ok: true }));
+    return true;
+  }
+  if (message?.type === 'DCA_EFFECTIVE_SETTINGS') {
+    void refreshRemotePolicy().then(() => loadSettings()).then(sendResponse);
+    return true;
+  }
+  if (message?.type === 'DCA_PUSH_POLICY') {
+    void (async () => {
+      const local = await loadLocalSettings();
+      await saveSettings({ ...local, ...message.policy });
+      const policy = await pushPolicy(message.policy ?? {});
+      sendResponse({ ok: true, policy });
+    })();
     return true;
   }
 });
