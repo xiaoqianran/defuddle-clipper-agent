@@ -5,19 +5,23 @@
   <meta name="viewport" content="width=device-width">
   <title>Defuddle Clipper Agent</title>
   <style>
-    body { font: 14px system-ui, sans-serif; width: 300px; margin: 0; padding: 16px; }
-    h1 { font-size: 16px; margin: 0 0 14px; }
+    body { font: 14px system-ui, sans-serif; width: 300px; margin: 0; padding: 16px; color: #1f2328; }
+    h1 { font-size: 16px; margin: 0 0 8px; }
+    #mode { font-weight: 600; margin-bottom: 10px; }
     button { width: 100%; padding: 9px 10px; margin: 5px 0; cursor: pointer; }
-    #status { margin-top: 10px; min-height: 36px; white-space: pre-wrap; color: #444; }
-    .muted { color: #777; font-size: 12px; }
+    #status { margin-top: 10px; min-height: 36px; white-space: pre-wrap; color: #667085; font-size: 12px; }
+    .hint { color: #667085; font-size: 12px; margin-bottom: 10px; line-height: 1.4; }
   </style>
 </head>
 <body>
   <h1>Defuddle Clipper Agent</h1>
-  <button id="capture">Capture page</button>
-  <button id="health">Check local agent</button>
+  <div class="hint">Runs mostly in the background. The local desktop app is the primary UI.</div>
+  <div id="mode">Auto Capture: …</div>
+  <button id="toggle">Pause auto capture</button>
+  <button id="capture">Capture now (fallback)</button>
+  <button id="health">Check local bridge</button>
   <button id="options">Settings</button>
-  <div id="status" class="muted">Ready.</div>
+  <div id="status">Ready.</div>
   <script src="popup.js"></script>
 </body>
 </html>

@@ -5,28 +5,62 @@
   <meta name="viewport" content="width=device-width">
   <title>Defuddle Clipper Agent Settings</title>
   <style>
-    body { font: 14px system-ui, sans-serif; max-width: 680px; margin: 40px auto; padding: 0 20px; }
+    body { font: 14px system-ui, sans-serif; max-width: 760px; margin: 40px auto; padding: 0 20px; color: #1f2328; }
+    h1 { margin-bottom: 6px; }
+    h2 { font-size: 16px; margin-top: 30px; }
     label { display: block; margin: 18px 0 6px; font-weight: 600; }
-    input[type=text], input[type=password] { width: 100%; box-sizing: border-box; padding: 9px; }
-    button { margin-top: 20px; padding: 9px 18px; }
+    input[type=text], input[type=password], input[type=number], textarea { width: 100%; box-sizing: border-box; padding: 9px; font: inherit; }
+    textarea { min-height: 90px; resize: vertical; }
+    button { margin-top: 24px; padding: 10px 18px; }
     .row { display: flex; gap: 8px; align-items: center; margin-top: 14px; }
-    .hint { color: #666; margin-top: 5px; }
-    #status { margin-top: 12px; }
+    .row label { margin: 0; font-weight: 400; }
+    .hint { color: #667085; margin-top: 5px; line-height: 1.45; }
+    .panel { border: 1px solid #d0d7de; border-radius: 10px; padding: 18px; margin-top: 14px; }
+    #status { margin-top: 12px; min-height: 20px; }
   </style>
 </head>
 <body>
   <h1>Defuddle Clipper Agent</h1>
-  <label for="agentUrl">Local agent URL</label>
-  <input id="agentUrl" type="text" spellcheck="false">
-  <div class="hint">Default: http://127.0.0.1:27123</div>
+  <div class="hint">The extension is a background browser sensor. Reading and knowledge work belong in the local app.</div>
 
-  <label for="authToken">Bearer token</label>
-  <input id="authToken" type="password" autocomplete="off">
-  <div class="hint">Use the same value as DCA_TOKEN.</div>
+  <h2>Automatic browser mirror</h2>
+  <div class="panel">
+    <div class="row">
+      <input id="autoCapture" type="checkbox">
+      <label for="autoCapture">Automatically copy supported pages after navigation</label>
+    </div>
+    <div class="row">
+      <input id="followBrowser" type="checkbox">
+      <label for="followBrowser">Send active-tab changes for Follow Browser mode</label>
+    </div>
 
-  <div class="row">
-    <input id="includeHtml" type="checkbox">
-    <label for="includeHtml" style="margin:0;font-weight:400">Include cleaned HTML in ContentPacket</label>
+    <label for="captureDelayMs">Capture delay (milliseconds)</label>
+    <input id="captureDelayMs" type="number" min="250" max="30000" step="100">
+    <div class="hint">Delay before DOM-stability checks and extraction. Default: 1200 ms.</div>
+
+    <label for="domainAllowlist">Domain allowlist</label>
+    <textarea id="domainAllowlist" placeholder="Leave empty to allow all sites"></textarea>
+    <div class="hint">One domain per line. Subdomains are included.</div>
+
+    <label for="domainDenylist">Domain denylist</label>
+    <textarea id="domainDenylist" placeholder="example.com"></textarea>
+    <div class="hint">Denylist wins over allowlist. Useful for private or noisy sites.</div>
+  </div>
+
+  <h2>Local bridge</h2>
+  <div class="panel">
+    <label for="agentUrl">Local agent URL</label>
+    <input id="agentUrl" type="text" spellcheck="false">
+    <div class="hint">Default: http://127.0.0.1:27123</div>
+
+    <label for="authToken">Bearer token</label>
+    <input id="authToken" type="password" autocomplete="off">
+    <div class="hint">Use the same value as DCA_TOKEN.</div>
+
+    <div class="row">
+      <input id="includeHtml" type="checkbox">
+      <label for="includeHtml">Include cleaned HTML in ContentPacket</label>
+    </div>
   </div>
 
   <button id="save">Save settings</button>

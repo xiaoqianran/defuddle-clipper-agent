@@ -7,9 +7,11 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
+	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/browserstate"
 	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/capture"
 	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/protocol"
 )
@@ -19,13 +21,20 @@ type Server struct {
 	MaxBodyBytes int64
 	AIEnabled    bool
 	Captures     capture.Service
+	Browser      *browserstate.Store
 	Logger       *log.Logger
 }
 
 func (s Server) Handler() http.Handler {
+	if s.Browser == nil {
+		s.Browser = &browserstate.Store{}
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.health)
 	mux.HandleFunc("POST /v1/captures", s.auth(s.capture))
+	mux.HandleFunc("POST /v1/browser/active", s.auth(s.activePage))
+	mux.HandleFunc("GET /v1/browser/state", s.auth(s.browserState))
 	return s.logging(mux)
 }
 
@@ -74,6 +83,45 @@ func (s Server) capture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s Server) activePage(w http.ResponseWriter, r *http.Request) {
+	if !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json") {
+		writeError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	defer r.Body.Close()
+
+	var page browserstate.Page
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&page); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "request body must contain one JSON object")
+		return
+	}
+
+	parsed, err := url.Parse(page.URL)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		writeError(w, http.StatusBadRequest, "active page URL must be http or https")
+		return
+	}
+	if page.ObservedAt != "" {
+		if _, err := time.Parse(time.RFC3339, page.ObservedAt); err != nil {
+			writeError(w, http.StatusBadRequest, "observedAt must be RFC3339")
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, s.Browser.Set(page))
+}
+
+func (s Server) browserState(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.Browser.Get())
 }
 
 func (s Server) auth(next http.HandlerFunc) http.HandlerFunc {
