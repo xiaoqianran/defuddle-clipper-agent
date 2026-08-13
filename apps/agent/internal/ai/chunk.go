@@ -2,9 +2,9 @@ package ai
 
 import "strings"
 
-// SplitMarkdown keeps headings with the following content when possible and
-// falls back to paragraph boundaries. maxChars is an approximate provider
-// budget, not a token limit.
+// SplitMarkdown 在可能时把标题与其后内容放在一起，
+// 否则回退到段落边界。maxChars 是大致的 provider
+// 预算，不是 token 上限。
 func SplitMarkdown(markdown string, maxChars int) []string {
 	markdown = strings.TrimSpace(markdown)
 	if markdown == "" {

@@ -89,9 +89,8 @@ func (s Service) startDerived(ctx context.Context, packet protocol.ContentPacket
 		return Result{}, err
 	}
 
-	// The HTTP request context is cancelled when the client aborts or the
-	// handler returns. Analysis must outlive that; the AI client timeout
-	// still bounds the outbound call.
+	// HTTP 请求 context 会在客户端中止或 handler 返回时被取消。
+	// 分析必须比它活得更久；出站调用仍由 AI 客户端超时约束。
 	s.enqueue(context.WithoutCancel(ctx), packet, paths)
 	return Result{
 		CaptureID: packet.CaptureID,

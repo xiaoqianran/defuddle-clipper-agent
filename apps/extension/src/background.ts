@@ -163,7 +163,7 @@ async function postActivePage(page: ActivePage, sender: chrome.runtime.MessageSe
       signal: controller.signal
     });
   } catch {
-    // Follow Browser state is ephemeral. Capture delivery has its own durable queue.
+    // Follow Browser 状态是短暂的。捕获投递有自己的持久队列。
   } finally {
     clearTimeout(timeout);
   }
