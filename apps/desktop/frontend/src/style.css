@@ -52,7 +52,7 @@ button { color: inherit; }
 .dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: #666; }
 .dot.online { background: #62c785; box-shadow: 0 0 0 3px rgba(98, 199, 133, .12); }
 
-.top-actions { display: flex; align-items: center; gap: 8px; }
+.top-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 4px 8px; }
 .follow-toggle { display: flex; align-items: center; gap: 7px; padding: 7px 9px; border-radius: 8px; color: #c8c8ce; font-size: 12px; }
 .follow-toggle input { accent-color: #d8d8dc; }
 .icon-button, .reader-tabs button {
@@ -146,7 +146,7 @@ button { color: inherit; }
 .side-empty { margin-top: 20px; }
 
 .statusbar {
-  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px;
+  display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: center; gap: 12px;
   padding: 0 10px; border-top: 1px solid #29292d; background: #141417; color: #696973; font-size: 9px;
 }
 .active-url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; }

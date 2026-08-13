@@ -278,6 +278,26 @@ func serveExistingAgent(t *testing.T, protocolVersion string) *httptest.Server {
 	}))
 }
 
+func TestDesktopLoggerWritesToDataDir(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DCA_DATA_DIR", dir)
+	logger, closer := newDesktopLogger()
+	if closer == nil {
+		t.Fatal("expected log file closer")
+	}
+	logger.Print("hello-file-log")
+	if err := closer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, desktopLogFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "hello-file-log") {
+		t.Fatalf("log file missing message: %q", body)
+	}
+}
+
 func startTestAgent(t *testing.T, addr string) (func(context.Context) error, string, error) {
 	t.Helper()
 	ln, err := net.Listen("tcp", addr)

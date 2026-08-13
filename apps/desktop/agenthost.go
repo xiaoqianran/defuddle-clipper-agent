@@ -235,7 +235,7 @@ func desktopDataDir() string {
 
 func newDesktopLogger() (*log.Logger, io.Closer) {
 	dir := desktopDataDir()
-	writers := []io.Writer{os.Stderr}
+	var writers []io.Writer
 	var closer io.Closer
 	if err := os.MkdirAll(dir, 0o755); err == nil {
 		f, err := os.OpenFile(filepath.Join(dir, desktopLogFileName), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
@@ -244,7 +244,16 @@ func newDesktopLogger() (*log.Logger, io.Closer) {
 			closer = f
 		}
 	}
+	// -H windowsgui 下 stderr 可能不可写；不能让它拖垮 MultiWriter 把文件日志也丢掉。
+	writers = append(writers, ignoreWriteError{os.Stderr})
 	return log.New(io.MultiWriter(writers...), "dca: ", log.LstdFlags|log.LUTC), closer
+}
+
+type ignoreWriteError struct{ io.Writer }
+
+func (w ignoreWriteError) Write(p []byte) (int, error) {
+	_, _ = w.Writer.Write(p)
+	return len(p), nil
 }
 
 func waitHealthy(ctx context.Context, baseURL string, probe ProbeFunc) error {

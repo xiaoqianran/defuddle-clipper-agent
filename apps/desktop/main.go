@@ -13,6 +13,7 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 //go:embed all:frontend/dist
@@ -37,6 +38,7 @@ func main() {
 	}
 
 	app := NewApp()
+	app.emit = runtime.EventsEmit
 	clientURL, err := hostLife.Ensure(context.Background())
 	if err != nil {
 		logger.Printf("agent host: %v", err)

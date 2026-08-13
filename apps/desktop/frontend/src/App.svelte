@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import MarkdownView from './MarkdownView.svelte'
 
   type AIStatus = 'pending' | 'ok' | 'failed' | 'disabled' | 'unknown'
 
@@ -21,10 +22,28 @@
     updatedAt: string
   }
 
+  type Policy = {
+    revision?: number
+    autoCapture: boolean
+    archiveAll: boolean
+    captureDelayMs: number
+    domainAllowlist?: string[]
+    domainDenylist?: string[]
+  }
+
+  type SensorView = {
+    connected: boolean
+    seenAt?: string
+    queueLength: number
+    lastError?: string
+  }
+
   type Snapshot = {
     connected: boolean
     browser: BrowserState
     captures: CaptureSummary[]
+    policy?: Policy
+    sensor?: SensorView
   }
 
   type CaptureView = {
@@ -50,6 +69,9 @@
   let followBrowser = true
   let connected = false
   let error = ''
+  let policy: Policy = { autoCapture: true, archiveAll: true, captureDelayMs: 1200 }
+  let sensor: SensorView = { connected: false, queueLength: 0 }
+  let savingPolicy = false
   let loading = false
   let refreshing = false
   let reprocessing = false
@@ -110,6 +132,8 @@
       const next = await api().GetSnapshot(250) as Snapshot
       captures = next.captures ?? []
       browser = next.browser ?? browser
+      if (next.policy) policy = next.policy
+      if (next.sensor) sensor = next.sensor
       connected = true
       error = ''
 
@@ -153,10 +177,31 @@
     }
   }
 
+  async function putPolicy(next: Policy): Promise<void> {
+    if (savingPolicy) return
+    savingPolicy = true
+    const previous = policy
+    policy = next
+    try {
+      policy = await api().PutPolicy(next) as Policy
+      error = ''
+    } catch (cause) {
+      policy = previous
+      error = cause instanceof Error ? cause.message : String(cause)
+    } finally {
+      savingPolicy = false
+    }
+  }
+
   onMount(() => {
     void refresh()
-    const timer = window.setInterval(() => void refresh(), 1000)
-    return () => window.clearInterval(timer)
+    const runtime = (window as any).runtime
+    const off = typeof runtime?.EventsOn === 'function' ? runtime.EventsOn('dca:changed', () => void refresh()) : null
+    const timer = window.setInterval(() => void refresh(), 10_000)
+    return () => {
+      if (typeof off === 'function') off()
+      window.clearInterval(timer)
+    }
   })
 </script>
 
@@ -173,12 +218,22 @@
     <div class="browser-now" title={browser.page.url || 'No active browser page'}>
       <span class:online={connected} class="dot"></span>
       <div>
-        <small>{connected ? 'Browser' : 'Agent offline'}</small>
-        <div>{browser.page.title || (connected ? 'Waiting for browser…' : 'Start the local agent')}</div>
+        <small>{connected ? (sensor.connected ? 'Browser' : 'Waiting for extension') : 'Agent offline'}</small>
+        <div>{browser.page.title || (connected ? (sensor.connected ? 'Waiting for a page…' : 'Load the extension once') : 'Start Defuddle.exe')}</div>
       </div>
     </div>
 
     <div class="top-actions">
+      <label class="follow-toggle">
+        <input type="checkbox" checked={policy.autoCapture} disabled={savingPolicy}
+          on:change={() => void putPolicy({ ...policy, autoCapture: !policy.autoCapture })} />
+        <span>Auto Capture</span>
+      </label>
+      <label class="follow-toggle">
+        <input type="checkbox" checked={policy.archiveAll} disabled={savingPolicy}
+          on:change={() => void putPolicy({ ...policy, archiveAll: !policy.archiveAll })} />
+        <span>Archive All</span>
+      </label>
       <label class="follow-toggle">
         <input type="checkbox" bind:checked={followBrowser} />
         <span>Follow Browser</span>
@@ -204,7 +259,7 @@
       </div>
       <div class="history-list">
         {#if filteredCaptures.length === 0}
-          <div class="empty small">Browse a page in Chrome or Edge. It will appear here automatically.</div>
+          <div class="empty small">Load the extension once, then browse. Pages appear here automatically.</div>
         {:else}
           {#each filteredCaptures as item (item.captureId)}
             <button
@@ -256,14 +311,16 @@
           {:else if readerMode === 'transcript' && transcript}
             <article class="document"><pre>{transcript}</pre></article>
           {:else}
-            <article class="document"><pre>{view.sourceMarkdown}</pre></article>
+            <article class="document">
+              <MarkdownView text={view.sourceMarkdown} />
+            </article>
           {/if}
         </div>
       {:else}
         <div class="empty hero-empty">
           <div class="empty-icon">↘</div>
           <h1>Your browser, mirrored locally</h1>
-          <p>Keep browsing normally. Captured pages will appear in History and open here in a full-size reader.</p>
+          <p>Keep this window open and browse in Chrome or Edge. The extension is only a sensor — this is the reader.</p>
         </div>
       {/if}
     </section>
@@ -304,7 +361,8 @@
   </main>
 
   <footer class="statusbar">
-    <span>{connected ? '● local agent connected' : '○ local agent disconnected'}</span>
+    <span>{connected ? '● local agent' : '○ agent offline'}</span>
+    <span>{sensor.connected ? `sensor live · queue ${sensor.queueLength}` : 'sensor offline'}</span>
     {#if browser.page.url}<span class="active-url">active: {browser.page.url}</span>{/if}
     <span>{followBrowser ? 'following browser' : 'history inspection'}</span>
   </footer>

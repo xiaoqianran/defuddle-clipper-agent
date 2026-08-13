@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -75,10 +78,35 @@ type BrowserState struct {
 	UpdatedAt string      `json:"updatedAt"`
 }
 
+type Policy struct {
+	Revision        int      `json:"revision"`
+	AutoCapture     bool     `json:"autoCapture"`
+	ArchiveAll      bool     `json:"archiveAll"`
+	CaptureDelayMs  int      `json:"captureDelayMs"`
+	DomainAllowlist []string `json:"domainAllowlist"`
+	DomainDenylist  []string `json:"domainDenylist"`
+}
+
+type SensorView struct {
+	Connected   bool   `json:"connected"`
+	SeenAt      string `json:"seenAt,omitempty"`
+	QueueLength int    `json:"queueLength"`
+	LastError   string `json:"lastError,omitempty"`
+	Version     string `json:"version,omitempty"`
+}
+
+type ChangeEvent struct {
+	Type      string `json:"type"`
+	CaptureID string `json:"captureId,omitempty"`
+	At        string `json:"at"`
+}
+
 type Snapshot struct {
 	Connected bool             `json:"connected"`
 	Browser   BrowserState     `json:"browser"`
 	Captures  []CaptureSummary `json:"captures"`
+	Policy    Policy           `json:"policy"`
+	Sensor    SensorView       `json:"sensor"`
 }
 
 type AgentClient struct {
@@ -116,17 +144,32 @@ func NewAgentClient(base, token string) (*AgentClient, error) {
 }
 
 func (c *AgentClient) get(path string, out any) error {
-	return c.doJSON(http.MethodGet, path, out)
+	return c.doJSON(http.MethodGet, path, nil, out)
 }
 
 func (c *AgentClient) post(path string, out any) error {
-	return c.doJSON(http.MethodPost, path, out)
+	return c.doJSON(http.MethodPost, path, nil, out)
 }
 
-func (c *AgentClient) doJSON(method, path string, out any) error {
-	req, err := http.NewRequest(method, c.baseURL+path, nil)
+func (c *AgentClient) put(path string, body any, out any) error {
+	return c.doJSON(http.MethodPut, path, body, out)
+}
+
+func (c *AgentClient) doJSON(method, path string, body any, out any) error {
+	var reader io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		reader = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequest(method, c.baseURL+path, reader)
 	if err != nil {
 		return err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
@@ -137,17 +180,17 @@ func (c *AgentClient) doJSON(method, path string, out any) error {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return agentHTTPError(resp.StatusCode, body)
+		return agentHTTPError(resp.StatusCode, raw)
 	}
 	if out == nil {
 		return nil
 	}
-	return json.Unmarshal(body, out)
+	return json.Unmarshal(raw, out)
 }
 
 func agentHTTPError(status int, body []byte) error {
@@ -164,17 +207,88 @@ func (c *AgentClient) Snapshot(limit int) (Snapshot, error) {
 	if limit < 1 || limit > 500 {
 		limit = 100
 	}
-	var browser BrowserState
-	if err := c.get("/v1/browser/state", &browser); err != nil {
+	var status struct {
+		Browser  BrowserState     `json:"browser"`
+		Captures []CaptureSummary `json:"captures"`
+		Policy   Policy           `json:"policy"`
+		Sensor   SensorView       `json:"sensor"`
+	}
+	if err := c.get("/v1/status?limit="+strconv.Itoa(limit), &status); err != nil {
 		return Snapshot{}, err
 	}
-	var history struct {
-		Items []CaptureSummary `json:"items"`
+	return Snapshot{
+		Connected: true,
+		Browser:   status.Browser,
+		Captures:  status.Captures,
+		Policy:    status.Policy,
+		Sensor:    status.Sensor,
+	}, nil
+}
+
+func (c *AgentClient) GetPolicy() (Policy, error) {
+	var doc Policy
+	if err := c.get("/v1/policy", &doc); err != nil {
+		return Policy{}, err
 	}
-	if err := c.get("/v1/captures?limit="+strconv.Itoa(limit), &history); err != nil {
-		return Snapshot{}, err
+	return doc, nil
+}
+
+func (c *AgentClient) PutPolicy(doc Policy) (Policy, error) {
+	var saved Policy
+	if err := c.put("/v1/policy", doc, &saved); err != nil {
+		return Policy{}, err
 	}
-	return Snapshot{Connected: true, Browser: browser, Captures: history.Items}, nil
+	return saved, nil
+}
+
+func (c *AgentClient) WatchEvents(ctx context.Context, handle func(ChangeEvent)) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/events", nil)
+	if err != nil {
+		return err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	client := &http.Client{Timeout: 0}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+		return agentHTTPError(resp.StatusCode, body)
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	var eventType, data string
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			if data != "" {
+				var ev ChangeEvent
+				if json.Unmarshal([]byte(data), &ev) == nil {
+					if ev.Type == "" {
+						ev.Type = eventType
+					}
+					handle(ev)
+				}
+			}
+			eventType, data = "", ""
+			continue
+		}
+		if strings.HasPrefix(line, "event:") {
+			eventType = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+		}
+		if strings.HasPrefix(line, "data:") {
+			data = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		}
+	}
+	if err := scanner.Err(); err != nil && ctx.Err() == nil {
+		return err
+	}
+	return ctx.Err()
 }
 
 func (c *AgentClient) ReadCapture(captureID string) (CaptureView, error) {

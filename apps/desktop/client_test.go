@@ -13,29 +13,29 @@ import (
 func TestSnapshotDecodesAIStatus(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assertBearer(t, r, "secret")
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/browser/state":
-			writeJSON(w, map[string]any{
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/status" {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, map[string]any{
+			"browser": map[string]any{
 				"active":    true,
 				"page":      map[string]any{"url": "https://example.com", "title": "Example", "observedAt": "2026-08-13T15:00:00Z"},
 				"updatedAt": "2026-08-13T15:00:00Z",
-			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/captures":
-			writeJSON(w, map[string]any{
-				"items": []map[string]any{{
-					"captureId":   "cap-1",
-					"capturedAt":  "2026-08-13T15:00:00Z",
-					"title":       "Example",
-					"url":         "https://example.com",
-					"hasAnalysis": false,
-					"hasNote":     true,
-					"aiStatus":    "pending",
-				}},
-			})
-		default:
-			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
-			http.NotFound(w, r)
-		}
+			},
+			"captures": []map[string]any{{
+				"captureId":   "cap-1",
+				"capturedAt":  "2026-08-13T15:00:00Z",
+				"title":       "Example",
+				"url":         "https://example.com",
+				"hasAnalysis": false,
+				"hasNote":     true,
+				"aiStatus":    "pending",
+			}},
+			"policy": map[string]any{"autoCapture": true, "archiveAll": true, "captureDelayMs": 1200},
+			"sensor": map[string]any{"connected": true, "queueLength": 1},
+		})
 	}))
 	defer server.Close()
 
@@ -48,6 +48,35 @@ func TestSnapshotDecodesAIStatus(t *testing.T) {
 	}
 	if snap.Captures[0].AIStatus != "pending" || snap.Captures[0].CaptureID != "cap-1" {
 		t.Fatalf("aiStatus not decoded: %+v", snap.Captures[0])
+	}
+	if !snap.Policy.AutoCapture || !snap.Sensor.Connected || snap.Sensor.QueueLength != 1 {
+		t.Fatalf("control plane not decoded: %+v", snap)
+	}
+}
+
+func TestPutPolicySendsJSON(t *testing.T) {
+	var gotMethod, gotPath, gotAuth, gotType string
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath, gotAuth, gotType = r.Method, r.URL.Path, r.Header.Get("Authorization"), r.Header.Get("Content-Type")
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		writeJSON(w, map[string]any{"revision": 3, "autoCapture": false, "archiveAll": true, "captureDelayMs": 900})
+	}))
+	defer server.Close()
+
+	saved, err := testClient(server, "secret").PutPolicy(Policy{AutoCapture: false, ArchiveAll: true, CaptureDelayMs: 900})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPut || gotPath != "/v1/policy" || gotAuth != "Bearer secret" || !strings.HasPrefix(gotType, "application/json") {
+		t.Fatalf("request %s %s auth=%q type=%q", gotMethod, gotPath, gotAuth, gotType)
+	}
+	if body["autoCapture"] != false {
+		t.Fatalf("body=%v", body)
+	}
+	if saved.Revision != 3 || saved.AutoCapture {
+		t.Fatalf("saved=%+v", saved)
 	}
 }
 

@@ -1,4 +1,4 @@
-type Block =
+export type MarkdownBlock =
   | { type: 'heading'; level: number; text: string }
   | { type: 'paragraph'; text: string }
   | { type: 'quote'; text: string }
@@ -15,9 +15,9 @@ function beginsBlock(line: string): boolean {
     || /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)
 }
 
-function parse(input: string): Block[] {
+export function parseMarkdown(input: string): MarkdownBlock[] {
   const lines = input.replace(/\r\n/g, '\n').split('\n')
-  const blocks: Block[] = []
+  const blocks: MarkdownBlock[] = []
   let i = 0
 
   while (i < lines.length) {
@@ -93,68 +93,4 @@ function parse(input: string): Block[] {
   }
 
   return blocks
-}
-
-function appendTextElement(parent: HTMLElement, tag: string, text: string): HTMLElement {
-  const element = document.createElement(tag)
-  element.textContent = text
-  parent.appendChild(element)
-  return element
-}
-
-function render(pre: HTMLPreElement): void {
-  if (pre.dataset.dcaRendered === 'true') return
-  const transcriptActive = [...document.querySelectorAll('.reader-tabs button.active')]
-    .some(button => button.textContent?.trim() === 'Transcript')
-  if (transcriptActive) return
-
-  const text = pre.textContent ?? ''
-  if (!text.trim()) return
-
-  const root = document.createElement('div')
-  root.className = 'markdown-rendered'
-  root.dataset.source = 'safe-text-dom'
-
-  for (const block of parse(text)) {
-    if (block.type === 'heading') {
-      appendTextElement(root, `h${Math.min(6, Math.max(1, block.level))}`, block.text)
-    } else if (block.type === 'paragraph') {
-      appendTextElement(root, 'p', block.text)
-    } else if (block.type === 'quote') {
-      appendTextElement(root, 'blockquote', block.text)
-    } else if (block.type === 'hr') {
-      root.appendChild(document.createElement('hr'))
-    } else if (block.type === 'code') {
-      const wrapper = document.createElement('div')
-      wrapper.className = 'reader-code-block'
-      if (block.language) {
-        const language = appendTextElement(wrapper, 'div', block.language)
-        language.className = 'reader-code-language'
-      }
-      const codePre = document.createElement('pre')
-      const code = document.createElement('code')
-      code.textContent = block.text
-      codePre.appendChild(code)
-      wrapper.appendChild(codePre)
-      root.appendChild(wrapper)
-    } else {
-      const list = document.createElement(block.type)
-      for (const item of block.items) appendTextElement(list, 'li', item)
-      root.appendChild(list)
-    }
-  }
-
-  pre.dataset.dcaRendered = 'true'
-  pre.replaceWith(root)
-}
-
-function enhance(): void {
-  document.querySelectorAll<HTMLPreElement>('.reader-scroll .document > pre').forEach(render)
-}
-
-export function installMarkdownEnhancer(): () => void {
-  enhance()
-  const observer = new MutationObserver(() => queueMicrotask(enhance))
-  observer.observe(document.body, { childList: true, subtree: true })
-  return () => observer.disconnect()
 }
