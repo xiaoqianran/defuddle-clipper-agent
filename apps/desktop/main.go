@@ -1,3 +1,8 @@
+//go:build !dcatest
+
+// The dcatest tag excludes this Wails entrypoint so `go test -tags dcatest`
+// can run without embedding frontend/dist or linking WebKit.
+
 package main
 
 import (

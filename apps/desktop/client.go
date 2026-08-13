@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,6 +21,7 @@ type CaptureSummary struct {
 	Language    string `json:"language,omitempty"`
 	HasAnalysis bool   `json:"hasAnalysis"`
 	HasNote     bool   `json:"hasNote"`
+	AIStatus    string `json:"aiStatus"`
 }
 
 type Source struct {
@@ -51,6 +53,14 @@ type CaptureView struct {
 	SourceMarkdown string `json:"sourceMarkdown"`
 	Analysis       any    `json:"analysis,omitempty"`
 	Note           string `json:"note,omitempty"`
+	AIStatus       string `json:"aiStatus"`
+}
+
+type ReprocessResult struct {
+	CaptureID string `json:"captureId"`
+	NotePath  string `json:"notePath,omitempty"`
+	AIStatus  string `json:"aiStatus"`
+	Duplicate bool   `json:"duplicate,omitempty"`
 }
 
 type BrowserPage struct {
@@ -98,7 +108,15 @@ func NewAgentClientFromEnv() (*AgentClient, error) {
 }
 
 func (c *AgentClient) get(path string, out any) error {
-	req, err := http.NewRequest(http.MethodGet, c.baseURL+path, nil)
+	return c.doJSON(http.MethodGet, path, out)
+}
+
+func (c *AgentClient) post(path string, out any) error {
+	return c.doJSON(http.MethodPost, path, out)
+}
+
+func (c *AgentClient) doJSON(method, path string, out any) error {
+	req, err := http.NewRequest(method, c.baseURL+path, nil)
 	if err != nil {
 		return err
 	}
@@ -110,10 +128,28 @@ func (c *AgentClient) get(path string, out any) error {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("agent returned HTTP %d", resp.StatusCode)
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return err
 	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return agentHTTPError(resp.StatusCode, body)
+	}
+	if out == nil {
+		return nil
+	}
+	return json.Unmarshal(body, out)
+}
+
+func agentHTTPError(status int, body []byte) error {
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(body, &payload) == nil && strings.TrimSpace(payload.Error) != "" {
+		return fmt.Errorf("agent returned HTTP %d: %s", status, payload.Error)
+	}
+	return fmt.Errorf("agent returned HTTP %d", status)
 }
 
 func (c *AgentClient) Snapshot(limit int) (Snapshot, error) {
@@ -142,4 +178,15 @@ func (c *AgentClient) ReadCapture(captureID string) (CaptureView, error) {
 		return CaptureView{}, err
 	}
 	return view, nil
+}
+
+func (c *AgentClient) ReprocessCapture(captureID string) (ReprocessResult, error) {
+	if captureID == "" {
+		return ReprocessResult{}, fmt.Errorf("capture id is required")
+	}
+	var result ReprocessResult
+	if err := c.post("/v1/captures/"+url.PathEscape(captureID)+"/reprocess", &result); err != nil {
+		return ReprocessResult{}, err
+	}
+	return result, nil
 }

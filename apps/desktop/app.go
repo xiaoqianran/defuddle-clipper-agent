@@ -30,3 +30,10 @@ func (a *App) ReadCapture(captureID string) (CaptureView, error) {
 	}
 	return a.client.ReadCapture(captureID)
 }
+
+func (a *App) ReprocessCapture(captureID string) (ReprocessResult, error) {
+	if a.initErr != nil {
+		return ReprocessResult{}, a.initErr
+	}
+	return a.client.ReprocessCapture(captureID)
+}
