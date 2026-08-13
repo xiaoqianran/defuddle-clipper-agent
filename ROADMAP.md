@@ -60,8 +60,8 @@ SPA 导航到 B → 本地自动收到 B
 - [x] 搜索框
 - [x] 视频页面的 transcript 视图
 - [x] 前端 typecheck/build 已纳入 CI
-- [ ] 在桌面进程内嵌入/复用 agent 运行时
-- [ ] 桌面生命周期拥有本地捕获端点
+- [x] 在桌面进程内嵌入/复用 agent 运行时
+- [x] 桌面生命周期拥有本地捕获端点
 - [ ] 桌面 UI 中的 Archive All 控制
 - [ ] 详细的捕获/队列状态
 - [ ] 从桌面暂停 Auto Capture

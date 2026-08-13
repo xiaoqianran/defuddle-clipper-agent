@@ -114,7 +114,7 @@ Wails
     └── Settings
 ```
 
-现有的 `apps/agent` 实现不会丢弃。其 services 应被复用或迁入共享 Go 核心，这样桌面应用就不会再造第二套实现。
+现有的 `apps/agent` 实现不会丢弃。其 services 应被复用或迁入共享 Go 核心，这样桌面应用就不会再造第二套实现。桌面进程现在会嵌入该运行时：启动时绑定（或复用）本地捕获 HTTP 端点，UI 仍通过现有 HTTP 客户端访问。
 
 ## Follow Browser 与 Archive All
 

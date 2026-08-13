@@ -87,8 +87,16 @@ type AgentClient struct {
 	http    *http.Client
 }
 
+func agentTokenFromEnv() string {
+	return os.Getenv("DCA_TOKEN")
+}
+
 func NewAgentClientFromEnv() (*AgentClient, error) {
-	base := strings.TrimRight(os.Getenv("DCA_AGENT_URL"), "/")
+	return NewAgentClient(clientURLFromEnv(), agentTokenFromEnv())
+}
+
+func NewAgentClient(base, token string) (*AgentClient, error) {
+	base = strings.TrimRight(strings.TrimSpace(base), "/")
 	if base == "" {
 		base = "http://127.0.0.1:27123"
 	}
@@ -102,7 +110,7 @@ func NewAgentClientFromEnv() (*AgentClient, error) {
 	}
 	return &AgentClient{
 		baseURL: base,
-		token:   os.Getenv("DCA_TOKEN"),
+		token:   token,
 		http:    &http.Client{Timeout: 8 * time.Second},
 	}, nil
 }
