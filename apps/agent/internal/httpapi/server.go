@@ -33,6 +33,8 @@ func (s Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.health)
 	mux.HandleFunc("POST /v1/captures", s.auth(s.capture))
+	mux.HandleFunc("GET /v1/captures", s.auth(s.listCaptures))
+	mux.HandleFunc("GET /v1/captures/{captureID}", s.auth(s.readCapture))
 	mux.HandleFunc("POST /v1/browser/active", s.auth(s.activePage))
 	mux.HandleFunc("GET /v1/browser/state", s.auth(s.browserState))
 	return s.logging(mux)
