@@ -32,10 +32,8 @@ func main() {
 		)
 	}
 
-	captures := capture.Service{
-		Store:    storage.Store{Root: cfg.DataDir},
-		Analyzer: analyzer,
-	}
+	captures := capture.New(storage.Store{Root: cfg.DataDir}, analyzer)
+	captures.Logger = logger
 
 	api := httpapi.Server{
 		Token:        cfg.Token,

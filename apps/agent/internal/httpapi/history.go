@@ -40,3 +40,18 @@ func (s Server) readCapture(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, view)
 }
+
+func (s Server) reprocessCapture(w http.ResponseWriter, r *http.Request) {
+	captureID := r.PathValue("captureID")
+	result, err := s.Captures.Reprocess(r.Context(), captureID)
+	if errors.Is(err, os.ErrNotExist) {
+		writeError(w, http.StatusNotFound, "capture not found")
+		return
+	}
+	if err != nil {
+		s.logf("reprocess %s failed: %v", captureID, err)
+		writeError(w, http.StatusInternalServerError, "capture reprocess failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}

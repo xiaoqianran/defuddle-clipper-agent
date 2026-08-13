@@ -40,6 +40,6 @@ export interface ContentPacket {
 export interface SubmitResult {
   captureId: string;
   notePath?: string;
-  aiStatus: 'ok' | 'failed' | 'disabled' | 'unknown';
+  aiStatus: 'ok' | 'failed' | 'disabled' | 'unknown' | 'pending';
   duplicate?: boolean;
 }

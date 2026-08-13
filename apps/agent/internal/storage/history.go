@@ -20,6 +20,7 @@ type CaptureSummary struct {
 	Language    string `json:"language,omitempty"`
 	HasAnalysis bool   `json:"hasAnalysis"`
 	HasNote     bool   `json:"hasNote"`
+	AIStatus    string `json:"aiStatus"`
 }
 
 type CaptureView struct {
@@ -27,6 +28,7 @@ type CaptureView struct {
 	SourceMarkdown string                 `json:"sourceMarkdown"`
 	Analysis       any                    `json:"analysis,omitempty"`
 	Note           string                 `json:"note,omitempty"`
+	AIStatus       string                 `json:"aiStatus"`
 }
 
 func (s Store) List(limit int) ([]CaptureSummary, error) {
@@ -57,9 +59,7 @@ func (s Store) List(limit int) ([]CaptureSummary, error) {
 		if err != nil {
 			return nil
 		}
-		dir := filepath.Dir(path)
-		_, analysisErr := os.Stat(filepath.Join(dir, "analysis.json"))
-		_, noteErr := os.Stat(filepath.Join(dir, "note.md"))
+		paths := NewPaths(filepath.Dir(path))
 		items = append(items, CaptureSummary{
 			CaptureID:   packet.CaptureID,
 			CapturedAt:  packet.CapturedAt,
@@ -67,8 +67,9 @@ func (s Store) List(limit int) ([]CaptureSummary, error) {
 			URL:         packet.Source.URL,
 			Site:        packet.Source.Site,
 			Language:    packet.Source.Language,
-			HasAnalysis: analysisErr == nil,
-			HasNote:     noteErr == nil,
+			HasAnalysis: exists(paths.Analysis),
+			HasNote:     exists(paths.Note),
+			AIStatus:    paths.AIStatus(),
 		})
 		return nil
 	})
@@ -83,41 +84,58 @@ func (s Store) List(limit int) ([]CaptureSummary, error) {
 	return items, nil
 }
 
-func (s Store) Read(captureID string) (CaptureView, error) {
-	if !validCaptureID(captureID) {
-		return CaptureView{}, os.ErrNotExist
-	}
-
-	pattern := filepath.Join(s.Root, "captures", "*", "*", "*", captureID, "packet.json")
-	matches, err := filepath.Glob(pattern)
+func (s Store) Load(captureID string) (protocol.ContentPacket, Paths, error) {
+	packetPath, err := s.packetPath(captureID)
 	if err != nil {
-		return CaptureView{}, err
+		return protocol.ContentPacket{}, Paths{}, err
 	}
-	if len(matches) == 0 {
-		return CaptureView{}, os.ErrNotExist
-	}
-
-	packetPath := matches[0]
 	packet, err := loadPacket(packetPath)
 	if err != nil {
+		return protocol.ContentPacket{}, Paths{}, err
+	}
+	return packet, NewPaths(filepath.Dir(packetPath)), nil
+}
+
+func (s Store) Read(captureID string) (CaptureView, error) {
+	packet, paths, err := s.Load(captureID)
+	if err != nil {
 		return CaptureView{}, err
 	}
-	dir := filepath.Dir(packetPath)
-	view := CaptureView{Packet: packet, SourceMarkdown: packet.Content.Markdown}
+	view := CaptureView{
+		Packet:         packet,
+		SourceMarkdown: packet.Content.Markdown,
+		AIStatus:       paths.AIStatus(),
+	}
 
-	if raw, err := os.ReadFile(filepath.Join(dir, "source.md")); err == nil {
+	if raw, err := os.ReadFile(paths.Source); err == nil {
 		view.SourceMarkdown = string(raw)
 	}
-	if raw, err := os.ReadFile(filepath.Join(dir, "analysis.json")); err == nil {
+	if raw, err := os.ReadFile(paths.Analysis); err == nil {
 		var value any
 		if json.Unmarshal(raw, &value) == nil {
 			view.Analysis = value
 		}
 	}
-	if raw, err := os.ReadFile(filepath.Join(dir, "note.md")); err == nil {
+	if raw, err := os.ReadFile(paths.Note); err == nil {
 		view.Note = string(raw)
 	}
 	return view, nil
+}
+
+func (s Store) packetPath(captureID string) (string, error) {
+	if !validCaptureID(captureID) {
+		return "", os.ErrNotExist
+	}
+
+	pattern := filepath.Join(s.Root, "captures", "*", "*", "*", captureID, "packet.json")
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return "", err
+	}
+	if len(matches) == 0 {
+		return "", os.ErrNotExist
+	}
+	return matches[0], nil
 }
 
 func loadPacket(path string) (protocol.ContentPacket, error) {

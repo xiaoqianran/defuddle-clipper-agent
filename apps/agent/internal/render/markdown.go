@@ -10,6 +10,14 @@ import (
 )
 
 func Markdown(packet protocol.ContentPacket, analysis *ai.Analysis, aiErr error) string {
+	return markdown(packet, analysis, aiErr, false)
+}
+
+func PendingMarkdown(packet protocol.ContentPacket) string {
+	return markdown(packet, nil, nil, true)
+}
+
+func markdown(packet protocol.ContentPacket, analysis *ai.Analysis, aiErr error, pending bool) string {
 	var b strings.Builder
 
 	b.WriteString("---\n")
@@ -46,6 +54,9 @@ func Markdown(packet protocol.ContentPacket, analysis *ai.Analysis, aiErr error)
 		listSection(&b, "Conclusions", analysis.Conclusions)
 		listSection(&b, "Actions", analysis.Actions)
 		listSection(&b, "Questions", analysis.Questions)
+	} else if pending {
+		b.WriteString("## AI Analysis\n\n")
+		b.WriteString("> Analysis is pending. This note will update when the model finishes.\n\n")
 	} else if aiErr != nil {
 		b.WriteString("## AI Analysis\n\n")
 		b.WriteString("> Analysis failed. The original capture is preserved and can be reprocessed later.\n\n")
