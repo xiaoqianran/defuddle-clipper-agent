@@ -7,7 +7,9 @@ export function canonicalizeUrl(rawUrl: string): string {
   url.hostname = url.hostname.toLowerCase();
 
   const trackingNames = new Set(['fbclid', 'gclid', 'dclid', 'mc_cid', 'mc_eid', 'ref_src']);
-  for (const key of [...url.searchParams.keys()]) {
+  const keys: string[] = [];
+  url.searchParams.forEach((_value, key) => keys.push(key));
+  for (const key of keys) {
     const lower = key.toLowerCase();
     if (lower.startsWith('utm_') || trackingNames.has(lower)) url.searchParams.delete(key);
   }
