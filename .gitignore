@@ -6,7 +6,11 @@ Thumbs.db
 
 # Go
 apps/agent/clipper-agent
+apps/agent/clipper-agent.exe
 apps/agent/coverage.out
+
+# Wails 本地/CI 打包产物
+apps/desktop/build/
 
 # Local agent data/config
 .env

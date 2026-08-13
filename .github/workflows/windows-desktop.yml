@@ -1,0 +1,138 @@
+# Windows 原生打包：Wails 桌面阅读器 + 独立 clipper-agent.exe。
+# 不在 pull_request 上运行，以节省 Windows runner 分钟数。
+# 桌面 exe 不内嵌 agent；完整安装仍需本机 agent + 浏览器扩展。
+
+name: Windows Desktop
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CGO_ENABLED: '1'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+          cache-dependency-path: |
+            apps/desktop/go.mod
+            apps/agent/go.mod
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 安装 MinGW（Wails Windows 构建需要 gcc/cgo）
+        run: |
+          choco install mingw -y --no-progress
+          $candidates = @(
+            'C:\ProgramData\mingw64\mingw64\bin',
+            'C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin'
+          )
+          foreach ($dir in $candidates) {
+            if (Test-Path -LiteralPath (Join-Path $dir 'gcc.exe')) {
+              $dir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+            }
+          }
+          $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+          foreach ($dir in ($machinePath -split ';')) {
+            if ($dir -and ($dir -match 'mingw') -and (Test-Path -LiteralPath (Join-Path $dir 'gcc.exe'))) {
+              $dir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+            }
+          }
+
+      - name: 安装 Wails CLI v2.12.0
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+          $goBin = Join-Path ((go env GOPATH).Trim()) 'bin'
+          $goBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $env:Path = "$goBin;$env:Path"
+          wails version
+
+      - name: 安装 NSIS（可选；失败不影响 exe 产物）
+        continue-on-error: true
+        run: |
+          choco install nsis -y --no-progress
+          foreach ($dir in @("${env:ProgramFiles(x86)}\NSIS", "${env:ProgramFiles}\NSIS")) {
+            if (Test-Path -LiteralPath (Join-Path $dir 'makensis.exe')) {
+              $dir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+              break
+            }
+          }
+
+      - name: Wails doctor
+        working-directory: apps/desktop
+        continue-on-error: true
+        run: wails doctor
+
+      - name: 构建 Wails 桌面应用
+        working-directory: apps/desktop
+        run: |
+          gcc --version
+          $useNsis = [bool](Get-Command makensis -ErrorAction SilentlyContinue)
+          if ($useNsis) {
+            Write-Host 'makensis found; wails build -nsis'
+            wails build -platform windows/amd64 -nsis
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host 'wails build -nsis failed; falling back to exe-only'
+              wails build -platform windows/amd64
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            }
+          } else {
+            Write-Host 'makensis not found; building exe only'
+            wails build -platform windows/amd64
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          $exe = Join-Path 'build/bin' 'defuddle-browser-mirror.exe'
+          if (-not (Test-Path -LiteralPath $exe)) {
+            throw "missing desktop exe: $exe"
+          }
+
+      - name: 构建 clipper-agent.exe
+        working-directory: apps/agent
+        run: |
+          go build -o clipper-agent.exe ./cmd/clipper-agent
+          if (-not (Test-Path -LiteralPath 'clipper-agent.exe')) {
+            throw 'missing clipper-agent.exe'
+          }
+
+      - name: 收集产物
+        run: |
+          $out = 'packaging/windows-amd64'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item -Path 'apps/desktop/build/bin/*.exe' -Destination $out -ErrorAction Stop
+          Copy-Item -Path 'apps/agent/clipper-agent.exe' -Destination $out -ErrorAction Stop
+          Get-ChildItem -LiteralPath $out | Format-Table Name, Length
+          foreach ($required in @('defuddle-browser-mirror.exe', 'clipper-agent.exe')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $out $required))) {
+              throw "missing required artifact: $required"
+            }
+          }
+
+      - name: 上传 windows-amd64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-amd64
+          if-no-files-found: error
+          path: packaging/windows-amd64/*

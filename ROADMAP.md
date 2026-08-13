@@ -67,7 +67,7 @@ SPA 导航到 B → 本地自动收到 B
 - [ ] 从桌面暂停 Auto Capture
 - [ ] 渲染后的 Markdown/清洗后的 HTML 阅读模式
 - [ ] 捕获/数据/AI 设置 UI
-- [ ] 原生 Wails 打包 CI
+- [x] Windows 原生 Wails 打包 CI（macOS/Linux 稍后）
 
 当前验收：
 
