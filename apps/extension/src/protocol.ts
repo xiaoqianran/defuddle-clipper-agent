@@ -27,7 +27,7 @@ export interface ContentPacket {
     image?: string;
     favicon?: string;
     schemaOrg?: unknown;
-    metaTags?: Record<string, unknown>[];
+    metaTags?: Array<{ name?: string | null; property?: string | null; content: string | null }>;
     variables?: Record<string, unknown>;
     [key: string]: unknown;
   };

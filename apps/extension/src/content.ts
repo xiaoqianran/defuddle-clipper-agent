@@ -68,7 +68,7 @@ async function extractPacket(): Promise<ContentPacket> {
       image: result.image || undefined,
       favicon: result.favicon || undefined,
       schemaOrg: result.schemaOrgData,
-      metaTags: (result.metaTags ?? []) as Record<string, unknown>[],
+      metaTags: result.metaTags ?? [],
       variables
     },
     ...(transcript ? { media: { transcript } } : {})
