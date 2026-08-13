@@ -1,79 +1,167 @@
 # Architecture
 
-## System boundary
+## Product boundary
+
+The browser extension is a sensor. The local desktop application is the product.
 
 ```text
-┌──────────────────────── Browser ─────────────────────────┐
-│                                                         │
-│  DOM                                                    │
-│   │                                                     │
-│   ▼                                                     │
-│  Defuddle                                               │
-│   │ cleaned content + metadata + site variables         │
-│   ▼                                                     │
-│  ContentPacket v1                                       │
-│   │                                                     │
-│   ├─ popup feedback                                     │
-│   └─ background delivery + retry queue                  │
-└─────────────────────────┬───────────────────────────────┘
-                          │ HTTP JSON
-                          ▼
-┌──────────────────── Local Agent ────────────────────────┐
+┌──────────────────────── Browser ────────────────────────┐
 │                                                        │
-│  HTTP adapter                                          │
-│      │                                                 │
-│      ▼                                                 │
-│  CaptureService                                        │
-│      │                                                 │
-│      ├──► Store packet.json + source.md FIRST          │
-│      │                                                 │
-│      ├──► Analyzer                                     │
-│      │      ├─ short document → one analysis           │
-│      │      └─ long document → chunks → synthesis      │
-│      │                                                 │
-│      └──► Renderer → note.md                           │
-│                                                        │
-└────────────────────────────────────────────────────────┘
+│ rendered/authenticated DOM                             │
+│        ↓                                               │
+│ navigation observer                                    │
+│        ↓                                               │
+│ debounce + DOM stability                               │
+│        ↓                                               │
+│ Defuddle                                               │
+│        ↓                                               │
+│ ContentPacket v1                                       │
+│        ↓                                               │
+│ background delivery + retry queue                      │
+└────────────────────────┬───────────────────────────────┘
+                         │ localhost HTTP
+                         ▼
+┌──────────────────── Local Go Core ─────────────────────┐
+│                                                       │
+│ capture endpoint                                      │
+│      ↓                                                │
+│ CaptureService                                        │
+│      ├─ raw-first Store                               │
+│      ├─ current-page / Follow Browser state           │
+│      ├─ archive/index services                        │
+│      └─ optional Analyzer                             │
+└────────────────────────┬──────────────────────────────┘
+                         │
+                         ▼
+┌──────────────────── Desktop Application ───────────────┐
+│                                                       │
+│ History        Reader                 AI / Notes       │
+│                                                       │
+│ Follow Browser | Archive All | Search | Settings      │
+└───────────────────────────────────────────────────────┘
 ```
 
-## Why the browser is thin
+## Browser capture model
 
-Browser extensions are good at:
+Normal operation must not require a popup click.
 
-- seeing the rendered authenticated DOM
-- user interaction
-- selections/highlights
-- handing captured data to another process
+The extension observes:
 
-They are a poor place for:
+- normal page loads;
+- active-tab changes;
+- SPA navigation (`pushState`, `replaceState`, `popstate`);
+- URL changes that do not cause full reloads.
 
-- filesystem orchestration
-- long-running jobs
-- model credentials
-- embeddings/indexes
-- durable queues
-- subprocesses
-- large local databases
+A capture coordinator prevents noise:
 
-Therefore the extension never becomes the knowledge engine.
+```text
+navigation signal
+    ↓
+debounce
+    ↓
+wait for usable/stable DOM
+    ↓
+Defuddle.parseAsync()
+    ↓
+canonical URL + content fingerprint
+    ↓
+new meaningful page?
+  ├─ no  → ignore
+  └─ yes → submit ContentPacket
+```
 
-## Why Defuddle is upstream
+Scrolling, ads, lazy widgets and unrelated DOM mutations must not generate a capture flood.
 
-Defuddle already owns the hardest generic extraction concerns:
+Manual capture remains a fallback/debug action, not the primary interaction.
 
-- main content detection
-- consistent HTML/Markdown cleanup
-- metadata and Schema.org extraction
-- site-specific extractors
-- async variables such as transcripts where supported
+## Why the browser stays thin
 
-This repository defines policy around extraction; it does not fork the extraction engine.
+The extension is good at:
+
+- seeing the rendered page, including authenticated content;
+- detecting navigation and active-tab state;
+- running Defuddle against the live DOM;
+- forwarding selections/transcripts/metadata;
+- buffering failed deliveries.
+
+The extension should not own:
+
+- the primary reading UI;
+- model credentials;
+- local filesystem orchestration;
+- indexing/search databases;
+- large durable queues;
+- long-running processing;
+- knowledge relationships.
+
+## Desktop application
+
+Preferred target stack:
+
+```text
+Wails
+├── Go core
+│   ├── capture server
+│   ├── archive
+│   ├── processing
+│   ├── search
+│   └── AI providers
+└── Svelte UI
+    ├── History
+    ├── Reader
+    ├── AI / Notes
+    ├── Follow Browser
+    └── Settings
+```
+
+The existing `apps/agent` implementation is not discarded. Its services should be reused or moved into a shared Go core so the desktop application does not create a second implementation.
+
+## Follow Browser vs Archive All
+
+These are separate concepts.
+
+### Follow Browser
+
+The browser sends active-page/navigation state. The local Reader follows the page the user is currently viewing.
+
+```text
+active browser tab
+       ⇅
+local Reader
+```
+
+### Archive All
+
+Every eligible, deduplicated page is stored in History.
+
+```text
+History
+├── GitHub repository
+├── article
+├── Bilibili video + transcript
+├── documentation page
+└── ...
+```
+
+Follow Browser can be enabled while Archive All is disabled, and vice versa.
+
+## Defuddle boundary
+
+Defuddle remains an upstream dependency and owns extraction concerns:
+
+- main content detection;
+- consistent cleanup and Markdown conversion;
+- metadata and Schema.org extraction;
+- site-specific extractors;
+- async extractor variables such as transcripts where supported.
+
+This repository owns capture policy, delivery, archive, UI, AI and knowledge behavior.
 
 ## Protocol
 
-`ContentPacket` is deliberately richer than a single Markdown string.
+`ContentPacket` is the durable boundary between browser extraction and local processing.
 
-The stable fields are:
+Stable fields include:
 
 ```text
 protocolVersion
@@ -87,140 +175,109 @@ metadata
 media
 ```
 
-`content.markdown` is the primary AI context in P0.
-
-`content.html` is optional because raw HTML:
-
-- is larger
-- is less useful to most text models
-- increases privacy exposure
-- should not be required for downstream processing
-
-`metadata.variables` preserves Defuddle extractor-specific variables without coupling the protocol to every supported website.
+Future browser-mirror fields should be additive within protocol `1.x`, for example navigation/session metadata or active-page state.
 
 ## Persistence model
 
-The raw capture is primary data:
+Primary data:
 
 ```text
 packet.json
 source.md
+source.html    # planned
+raw.html       # optional/planned
+assets/        # planned
 ```
 
-Everything below is derived:
+Derived data:
 
 ```text
 analysis.json
-analysis-error.txt
 note.md
+SQLite/FTS indexes
+embeddings
+relations
 ```
 
-This gives the project a useful invariant:
+Derived data must be rebuildable from the primary archive whenever possible.
 
-> Changing the model, prompt, renderer, chunker or knowledge schema never requires revisiting the original webpage if the packet contains sufficient source material.
+Obsidian is not a system dependency. A normal filesystem directory is the default store. Pointing that directory at an Obsidian vault is merely one optional usage pattern.
 
-P1 may add a separate raw HTML/SingleFile archival artifact for stronger source fidelity.
+## AI policy
 
-## AI pipeline
-
-### Short content
+Automatic capture and automatic AI are intentionally independent.
 
 ```text
-markdown
-  ↓
-structured prompt
-  ↓
-Analysis
+Auto Capture: ON
+Auto AI:      OFF / rules
 ```
 
-### Long content
+Potential rules:
 
-```text
-markdown
-  ↓
-heading/paragraph chunks
-  ↓
-partial Analysis × N
-  ↓
-JSON aggregation
-  ↓
-final synthesis
-  ↓
-Analysis
-```
+- paper → analyze automatically;
+- video → analyze when transcript exists;
+- long article → analyze after dwell/length threshold;
+- search/result page → do not analyze.
 
-The output schema is stable even when providers/models change.
+AI failure never invalidates or removes the page archive.
 
 ## Failure model
 
 | Failure | Behavior |
 |---|---|
-| Defuddle fails | no packet is submitted; extension shows extraction error |
-| local agent down | extension queues packet |
-| auth rejected | packet remains queued |
-| disk failure | request fails; extension queues packet |
-| AI disabled | packet saved; note generated without AI |
-| AI fails | packet saved; error artifact written; note generated without AI |
-| response lost after successful save | retry uses same captureId; agent returns duplicate |
+| Defuddle fails | no invalid packet is submitted; diagnostic state is surfaced |
+| local app down | extension queues capture |
+| auth rejected | queued item is retained |
+| disk failure | delivery fails and item remains retryable |
+| AI disabled | archive remains fully usable |
+| AI fails | primary capture survives; error is inspectable |
+| duplicate navigation | fingerprint/dedup prevents archive flood |
+| response lost after save | same captureId is idempotent |
 
-## Future extension points
+## Storage extension point
 
-### Storage
+Filesystem is the default durable sink. Future storage/catalog integrations must stay behind core services.
 
 ```go
 type Store interface { ... }
 ```
 
-P0 ships filesystem storage. SQLite in P3 should catalog, not replace, the raw artifacts.
+SQLite catalogs filesystem artifacts; it does not replace them.
 
-### AI
+## Transport extension point
 
-```go
-type Analyzer interface {
-    Analyze(context.Context, protocol.ContentPacket) (Analysis, error)
-}
-```
+Core capture/knowledge services must not depend on transport. Input may later arrive from:
 
-Provider-specific HTTP belongs behind this interface.
+- browser HTTP;
+- Native Messaging;
+- CLI;
+- MCP;
+- batch import;
+- URL/RSS ingestion.
 
-### Transport
-
-The capture service does not know whether input came from:
-
-- HTTP
-- Native Messaging
-- CLI
-- MCP
-- batch import
-
-That separation is intentional.
-
-## Reference architecture lessons
+## Reference lessons
 
 ### Obsidian Web Clipper
 
 Borrow:
 
-- rendered-page capture model
-- Defuddle integration
-- variable mindset
-- selection/highlight UX concepts
+- rendered-page extraction patterns;
+- Defuddle integration;
+- selection/highlight concepts.
 
 Do not inherit:
 
-- Obsidian-only output assumptions
-- browser-resident AI as the primary architecture
+- Obsidian-only destination assumptions;
+- browser popup as the primary reading surface;
+- browser-resident AI as the core architecture.
 
 ### Atomic
 
 Borrow:
 
-- local-first processing
-- core vs transport separation
-- queued capture mindset
-- future semantic/MCP direction
+- local-first processing;
+- core vs transport separation;
+- durable archive/knowledge thinking;
+- future semantic/MCP direction.
 
-Do not inherit yet:
-
-- the full application stack
-- database/embedding complexity before capture is stable
+Do not inherit database/embedding complexity before automatic capture and the desktop Reader are excellent.
