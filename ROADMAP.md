@@ -62,11 +62,12 @@ SPA 导航到 B → 本地自动收到 B
 - [x] 前端 typecheck/build 已纳入 CI
 - [x] 在桌面进程内嵌入/复用 agent 运行时
 - [x] 桌面生命周期拥有本地捕获端点
-- [ ] 桌面 UI 中的 Archive All 控制
-- [ ] 详细的捕获/队列状态
-- [ ] 从桌面暂停 Auto Capture
-- [ ] 渲染后的 Markdown/清洗后的 HTML 阅读模式
-- [ ] 捕获/数据/AI 设置 UI
+- [x] 桌面 UI 中的 Archive All 控制
+- [x] 详细的捕获/队列状态
+- [x] 从桌面暂停 Auto Capture
+- [x] 渲染后的 Markdown 阅读模式
+- [ ] 清洗后的 HTML 阅读模式
+- [ ] 捕获/数据/AI 设置 UI（域名列表等仍在扩展 options；开关已在桌面）
 - [x] Windows 原生 Wails 打包 CI（macOS/Linux 稍后）
 
 当前验收：
@@ -137,7 +138,7 @@ Auto Capture 与 Auto AI 保持独立。
 - [ ] MCP server
 - [ ] `capture`、`search`、`read`、`reprocess`
 - [ ] CLI
-- [ ] WebSocket/SSE 事件
+- [x] SSE 事件（`GET /v1/events`；WebSocket 仍可选）
 - [ ] 外部自动化 API
 
 ## P7 — 捕获生态

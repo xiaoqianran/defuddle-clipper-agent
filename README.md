@@ -132,7 +132,7 @@ apps/extension/dist
 apps/desktop/frontend/dist
 ```
 
-### 2. 本地捕获端点
+### 2. 日常只开一个东西：桌面 exe
 
 默认端点：
 
@@ -140,7 +140,9 @@ apps/desktop/frontend/dist
 http://127.0.0.1:27123
 ```
 
-**日常使用：启动桌面应用即可。** 桌面会在进程内启动同一套 Go agent（`DCA_ADDR` 默认 `127.0.0.1:27123`）。若该地址上已经有本 agent 在跑（`GET /health` 返回 `protocolVersion` `1.0`），桌面会复用它，而不会再绑一次端口。关闭桌面时，也只会停掉**本进程启动**的服务器，不会杀掉你单独开的 `clipper-agent`。
+**双击 `Defuddle.exe`（或 `defuddle-browser-mirror.exe`）就够了。** 不要再单独开 `clipper-agent`。桌面会在进程内启动同一套 Go agent（`DCA_ADDR` 默认 `127.0.0.1:27123`）。若该地址上已经有本 agent 在跑（`GET /health` 返回 `protocolVersion` `1.0`），桌面会复用它，而不会再绑一次端口。关闭桌面时，也只会停掉**本进程启动**的服务器。
+
+浏览器扩展只需在 Chrome / Edge 里**加载一次**，之后正常上网即可。
 
 无界面/脚本场景仍可单独跑 agent（Go 1.22+）：
 
@@ -190,18 +192,21 @@ Follow Browser: ON
 
 桌面启动即带本地 agent。环境变量与独立 agent 相同（`DCA_ADDR`、`DCA_DATA_DIR`、`DCA_TOKEN`、`DCA_AI_*`、`DCA_OPENAI_*`）。`DCA_AGENT_URL` 仍给桌面 HTTP 客户端用（仅回环，默认 `http://127.0.0.1:27123`）；若桌面自己启动了服务器，客户端会改连实际绑定地址。
 
+本地跑桌面**不需要** Wails CLI，也**不需要** gcc / MinGW。Wails 在 Windows 上必须带 `production` 标签，否则只会弹出标题为 `Error` 的对话框。
+
 ```powershell
 cd apps/desktop
 
 $env:DCA_DATA_DIR="$HOME\dca-data"
 $env:DCA_TOKEN="replace-with-a-long-random-token"
+$env:CGO_ENABLED="0"
 
-go run .
+go run -tags desktop,production .
 ```
 
 Windows GUI 子系统下，启动/绑定错误会写入 `DCA_DATA_DIR\desktop.log`（若未设置数据目录，则写到 `%USERPROFILE%\.defuddle-clipper-agent\desktop.log`）。
 
-若要做 Wails 热重载开发，请安装已锁定的兼容 CLI：
+热重载（可选，才需要 Wails CLI）：
 
 ```powershell
 go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
@@ -212,9 +217,19 @@ wails dev
 
 ## Windows 打包
 
-桌面阅读器可用 Wails CLI 打成 Windows exe。`defuddle-browser-mirror.exe` **已内嵌** Go agent 生命周期：双击即可监听 `127.0.0.1:27123`。Windows 打包产物仍可附带独立 `clipper-agent.exe`，供无界面或已有 agent 在跑时使用。
+日常本地运行用上一节的 `go run -tags desktop,production .` 即可。下面的 Wails CLI / gcc 只用于打带图标和安装包的发行版。
 
-本地（PowerShell）：
+`defuddle-browser-mirror.exe` **已内嵌** Go agent 生命周期：双击即可监听 `127.0.0.1:27123`。Windows 打包产物仍可附带独立 `clipper-agent.exe`，供无界面或已有 agent 在跑时使用。
+
+不装 Wails CLI 也可以出 exe：
+
+```powershell
+cd apps/desktop
+$env:CGO_ENABLED="0"
+go build -tags desktop,production -o defuddle-browser-mirror.exe .
+```
+
+若要带图标 / NSIS 安装包，才需要已锁定的 Wails CLI（以及它背后的 gcc）：
 
 ```powershell
 go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
@@ -311,7 +326,14 @@ GET  /v1/captures/{captureId}
 POST /v1/captures/{captureId}/reprocess
 POST /v1/browser/active
 GET  /v1/browser/state
+GET  /v1/policy
+PUT  /v1/policy
+GET  /v1/status?limit=100
+POST /v1/sensor/heartbeat
+GET  /v1/events
 ```
+
+`/v1/policy` 是捕获控制面（Auto Capture、Archive All、延迟、域名列表），由桌面写入、扩展拉取。`/v1/events` 是 SSE，桌面用它即时刷新 History，而不是靠秒级轮询。
 
 桌面通过其 Go 桥接使用这些 API；Svelte UI 不会直接拿到 Bearer token。
 
