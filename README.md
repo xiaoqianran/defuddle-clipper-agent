@@ -1,107 +1,160 @@
 # Defuddle Clipper Agent
 
-A local-first web capture and AI knowledge pipeline.
+A local-first **browser mirror and web inbox**.
 
-**Goal:** turn the current browser page into a durable, structured local knowledge artifact with the smallest possible browser-side surface.
+The browser extension is intentionally tiny and mostly headless. The real product is a large local desktop application that automatically receives, archives, reads, and optionally analyzes the pages you visit.
+
+## Product goal
 
 ```text
-Browser page
-   ↓
-Defuddle
-   ↓
-ContentPacket v1
-   ↓
-MV3 extension
-   ↓
-localhost HTTP
-   ↓
-Go agent
-   ├─ raw packet persistence
-   ├─ OpenAI-compatible analysis
-   ├─ long-document chunk + synthesis
-   └─ Markdown rendering
-   ↓
-local knowledge directory / Obsidian vault
+You browse normally in Chrome / Edge
+              ↓
+      page / SPA navigation
+              ↓
+      headless MV3 extension
+              ↓
+          Defuddle
+              ↓
+       ContentPacket v1
+              ↓
+        localhost HTTP
+              ↓
+┌────────────────────────────────────────────┐
+│              Local Desktop App             │
+│                                            │
+│  History        Reader          AI / Notes │
+│  GitHub         full page       summary    │
+│  Zhihu          Markdown/HTML   key points │
+│  Bilibili       transcript      concepts   │
+│  arXiv          code/tables     questions  │
+└────────────────────────────────────────────┘
+              ↓
+        local durable archive
 ```
 
-## Why this repository exists
+The intended interaction is **not** `open page → click a tiny browser popup → read inside the extension`.
 
-This project deliberately does **not** fork Obsidian Web Clipper or Defuddle.
+It is:
 
-- [`defuddle`](https://github.com/kepano/defuddle) is used as the extraction dependency.
-- Obsidian Web Clipper is a reference for browser-side UX, selection/highlight flows, and extraction integration.
-- Atomic is a reference for local-first knowledge processing, offline delivery, and future semantic/MCP layers.
+```text
+open page → page is copied automatically → local app follows the browser
+```
 
-The core boundary is the versioned `ContentPacket` protocol. The extension can be replaced without rewriting the agent, and the agent can evolve without coupling the browser to storage or AI providers.
+## Product principles
 
-## Current milestone: P0 end-to-end capture
+1. **Auto-capture first.** Normal browsing should be enough; manual capture is only a fallback.
+2. **Browser is a sensor, desktop is the product.** Reading, history, AI, files, search and configuration live locally.
+3. **Local-first and destination-neutral.** Obsidian is optional. Plain local files are the default durable format.
+4. **Capture everything, analyze selectively.** Auto Capture can be always-on while Auto AI remains off or rule-driven.
+5. **Raw source before enrichment.** AI/provider failures must never lose a captured page.
+6. **Defuddle is upstream.** Use its generic and site-specific extractors instead of rebuilding extraction.
+7. **Stable protocol boundary.** Browser, desktop UI, storage and AI providers remain replaceable.
 
-Implemented:
+## Current state: P0 transport foundation
+
+Already implemented and CI-verified:
 
 - Chromium MV3 extension written in TypeScript.
-- Defuddle-based page extraction and Markdown conversion.
-- Metadata + Schema.org + extractor variables (including transcript when Defuddle provides it).
-- Versioned `ContentPacket` JSON contract.
+- Defuddle extraction and Markdown conversion.
+- Metadata, Schema.org and extractor variables, including transcript when Defuddle provides it.
+- Versioned `ContentPacket` v1 contract.
 - `localhost` delivery with optional Bearer token.
-- Persistent extension-side retry queue for an unavailable local agent.
+- Extension-side persistent retry queue when the local agent is unavailable.
 - Go local agent with no third-party runtime dependencies.
-- Raw packet saved **before** AI processing.
-- OpenAI-compatible AI provider.
-- Section/paragraph-aware long-document chunking and hierarchical synthesis.
-- Markdown note rendering.
+- Raw `packet.json` and `source.md` persisted before AI.
+- OpenAI-compatible optional analysis.
+- Long-document chunk + synthesis.
 - Idempotency by `captureId`.
-- Security checks for non-loopback binding and capture paths.
+- Security checks for loopback binding and capture paths.
 - Go tests and GitHub Actions CI.
 
-Not in P0:
+P0 proves transport and persistence. It still uses an explicit capture action and does **not yet** implement the final interaction model.
 
-- image localization
-- browser highlights/annotations
-- SQLite/full-text search
-- embeddings/semantic relations
-- MCP server
-- Native Messaging
-- Firefox/Safari packaging
+## Next milestone: automatic browser mirror
 
-These are intentionally staged in [`ROADMAP.md`](ROADMAP.md).
+```text
+Browser navigation
+  ↓
+URL / SPA change detection
+  ↓
+debounce + DOM stability
+  ↓
+Defuddle extraction
+  ↓
+content fingerprint / dedup
+  ↓
+automatic local delivery
+  ↓
+Desktop History + Reader follows current browser page
+```
 
-## Repository layout
+Required behaviors:
+
+- capture normal page loads automatically;
+- detect SPA navigation (`pushState`, `replaceState`, `popstate`, URL changes);
+- avoid repeated captures caused by ads, scrolling or incremental DOM mutations;
+- configurable debounce / minimum dwell time;
+- pause switch, allowlist and denylist;
+- ignore browser-internal/private pages by default;
+- manual **Capture now** remains available only as a fallback;
+- local desktop UI becomes the primary user-facing interface.
+
+See [`ROADMAP.md`](ROADMAP.md).
+
+## Target repository layout
 
 ```text
 .
 ├── apps/
-│   ├── extension/          # Chromium MV3 capture client
-│   └── agent/              # local Go service
+│   ├── extension/          # headless browser sensor / capture bridge
+│   ├── agent/              # Go core + localhost service (current P0)
+│   └── desktop/            # Wails + Svelte local UI (next)
 ├── packages/
-│   └── protocol/           # JSON Schema for ContentPacket
+│   └── protocol/           # versioned ContentPacket contract
 ├── docs/
 │   ├── ARCHITECTURE.md
 │   ├── SECURITY.md
 │   └── REFERENCES.md
 ├── .github/workflows/
 ├── AGENTS.md
-├── Makefile
 └── ROADMAP.md
 ```
 
-## 1. Run the local agent
+The current standalone agent is kept because its core services are useful. The desktop application should progressively embed/reuse that Go core rather than create a second implementation.
+
+## Local archive model
+
+Obsidian is **not required**. `DCA_DATA_DIR` can point to any normal folder.
+
+```text
+<DCA_DATA_DIR>/
+└── captures/
+    └── YYYY/MM/DD/<capture-id>/
+        ├── packet.json       # canonical structured capture
+        ├── source.md         # cleaned text for reading/search/AI
+        ├── source.html       # planned: cleaned HTML for local reader
+        ├── raw.html          # planned/optional: stronger source fidelity
+        ├── analysis.json     # optional derived AI result
+        ├── note.md           # optional rendered derivative
+        └── assets/           # planned localized images/assets
+```
+
+Filesystem artifacts remain portable and inspectable. Future SQLite/FTS/embedding indexes are derived catalogs and must be rebuildable.
+
+## Run the current P0 agent
 
 Requirements: Go 1.22+.
 
 ```bash
 cd apps/agent
 
-export DCA_DATA_DIR="$HOME/ObsidianVault/Inbox/WebClips"
+export DCA_DATA_DIR="$HOME/dca-data"
 export DCA_TOKEN="replace-with-a-long-random-token"
 
 go run ./cmd/clipper-agent
 ```
 
-Default listen address:
-
-```text
-127.0.0.1:27123
-```
+Default address: `127.0.0.1:27123`.
 
 Health check:
 
@@ -109,9 +162,9 @@ Health check:
 curl http://127.0.0.1:27123/health
 ```
 
-### Enable AI
+### Optional AI
 
-AI is disabled by default. The provider is OpenAI Chat Completions compatible.
+AI is disabled by default and remains independent from automatic capture.
 
 ```bash
 export DCA_AI_ENABLED=true
@@ -120,9 +173,17 @@ export DCA_OPENAI_API_KEY="..."
 export DCA_OPENAI_MODEL="your-model-id"
 ```
 
-Local compatible endpoints can leave the API key empty if the server does not require one.
+Long term, Auto AI is rule-driven, for example:
 
-## 2. Build the extension
+```text
+paper       → always
+repository  → optional
+video       → if transcript exists
+article     → if dwell time / length threshold is met
+search page → never
+```
+
+## Build the current extension
 
 Requirements: Node.js 20+.
 
@@ -131,59 +192,62 @@ npm install
 npm run build
 ```
 
-Load:
+Load `apps/extension/dist` from `chrome://extensions` → **Developer mode** → **Load unpacked**.
+
+Current P0 still exposes manual capture. This UI is transitional; the target extension is headless except for status/settings/pause controls.
+
+## Desktop application direction
+
+Preferred stack:
 
 ```text
-apps/extension/dist
+Wails
+├── Go core
+│   ├── localhost capture server
+│   ├── archive services
+│   ├── processing jobs
+│   ├── search/indexing
+│   └── AI providers
+└── Svelte UI
+    ├── History
+    ├── Reader
+    ├── AI / Notes
+    ├── Follow Browser
+    └── Settings
 ```
 
-from `chrome://extensions` → **Developer mode** → **Load unpacked**.
-
-Open extension settings and set:
+Primary UI concept:
 
 ```text
-Agent URL: http://127.0.0.1:27123
-Token:     same value as DCA_TOKEN
+┌──────────────────────────────────────────────────────────────┐
+│ Search                     Auto Capture ●   Auto AI ○       │
+├──────────────┬────────────────────────────┬──────────────────┤
+│ HISTORY      │ READER                     │ AI / NOTES       │
+│ GitHub       │ cleaned page / Markdown    │ summary          │
+│ Zhihu        │ images / code / tables     │ key points       │
+│ Bilibili     │ transcript                 │ concepts         │
+│ arXiv        │                            │ questions        │
+├──────────────┴────────────────────────────┴──────────────────┤
+│ current source URL · capture time · extractor · status      │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-Then open any page and click **Capture page**.
+Two core modes:
 
-## 3. Output
+- **Follow Browser** — local Reader switches to the page currently active in the browser.
+- **Archive All** — every eligible page becomes part of the searchable local history.
 
-Each capture is immutable at the protocol boundary and stored by date:
+## Explicit non-goals
 
-```text
-<DCA_DATA_DIR>/
-└── captures/
-    └── 2026/
-        └── 08/
-            └── 13/
-                └── <capture-id>/
-                    ├── packet.json
-                    ├── source.md
-                    ├── analysis.json       # when AI succeeds
-                    ├── analysis-error.txt  # when AI fails
-                    └── note.md
-```
+The project is not:
 
-`packet.json` and `source.md` are persisted before AI is invoked, so an AI outage never loses the captured source.
+- an Obsidian plugin or Obsidian clone;
+- a browser-popup reading application;
+- a cloud SaaS;
+- a general crawler that indiscriminately fetches the public web;
+- a vector database with a capture feature bolted on.
 
-## Configuration
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `DCA_ADDR` | `127.0.0.1:27123` | listen address |
-| `DCA_DATA_DIR` | `~/.defuddle-clipper-agent` | capture root |
-| `DCA_TOKEN` | empty | optional Bearer token; strongly recommended |
-| `DCA_MAX_BODY_BYTES` | `10485760` | max capture payload |
-| `DCA_AI_ENABLED` | `false` | enable AI analysis |
-| `DCA_OPENAI_BASE_URL` | `https://api.openai.com/v1` | compatible API base |
-| `DCA_OPENAI_API_KEY` | empty | provider key |
-| `DCA_OPENAI_MODEL` | empty | required when AI is enabled |
-| `DCA_AI_CHUNK_CHARS` | `12000` | approximate max chars per analysis chunk |
-| `DCA_AI_TIMEOUT_SECONDS` | `90` | per-request timeout |
-
-If `DCA_ADDR` is not loopback, the agent refuses to start unless `DCA_TOKEN` is set.
+It is a **local web inbox / browser mirror**: automatically copy what the user actually browses, preserve it locally, present it in a large desktop reader, and add AI/knowledge capabilities on top.
 
 ## Development
 
@@ -192,16 +256,7 @@ make test
 make build
 ```
 
-Architecture rules and repository conventions are in [`AGENTS.md`](AGENTS.md).
-
-## Design principles
-
-1. **Capture first, enrich second.** Raw source must survive AI/provider failures.
-2. **Thin browser, capable local agent.** Files, queues, AI and future search stay outside the extension.
-3. **Stable protocol boundary.** Transport and storage are replaceable.
-4. **Defuddle, do not reinvent extraction.**
-5. **Local-first by default.** No cloud component is required.
-6. **Derived artifacts are reproducible.** A future model/prompt can regenerate `analysis.json` and `note.md` from `packet.json`.
+Architecture rules are in [`AGENTS.md`](AGENTS.md).
 
 ## License
 
