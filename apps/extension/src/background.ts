@@ -1,15 +1,30 @@
 import { ContentPacket, SubmitResult } from './protocol';
-import { loadSettings } from './settings';
+import { isSupportedPageUrl, loadSettings } from './settings';
 
 const QUEUE_KEY = 'dca.pendingCaptures';
+const SEEN_KEY = 'dca.seenCaptures';
 const RETRY_ALARM = 'dca.retry';
 const MAX_QUEUE = 100;
+const MAX_SEEN = 500;
+const inFlight = new Set<string>();
 
 interface PendingCapture {
   packet: ContentPacket;
   attempts: number;
   lastError?: string;
   queuedAt: string;
+}
+
+interface SeenCapture {
+  key: string;
+  url: string;
+  seenAt: string;
+}
+
+interface ActivePage {
+  url: string;
+  title: string;
+  observedAt: string;
 }
 
 async function readQueue(): Promise<PendingCapture[]> {
@@ -21,6 +36,30 @@ async function writeQueue(queue: PendingCapture[]): Promise<void> {
   await chrome.storage.local.set({ [QUEUE_KEY]: queue.slice(-MAX_QUEUE) });
 }
 
+async function readSeen(): Promise<SeenCapture[]> {
+  const data = await chrome.storage.local.get(SEEN_KEY);
+  return Array.isArray(data[SEEN_KEY]) ? data[SEEN_KEY] : [];
+}
+
+function dedupKey(packet: ContentPacket): string | undefined {
+  const raw = packet.metadata?.capture;
+  if (!raw || typeof raw !== 'object') return undefined;
+  const meta = raw as Record<string, unknown>;
+  const canonicalUrl = typeof meta.canonicalUrl === 'string' ? meta.canonicalUrl : undefined;
+  const fingerprint = typeof meta.contentFingerprint === 'string' ? meta.contentFingerprint : undefined;
+  return canonicalUrl && fingerprint ? `${canonicalUrl}::${fingerprint}` : undefined;
+}
+
+async function isSeen(key: string): Promise<boolean> {
+  return (await readSeen()).some(item => item.key === key);
+}
+
+async function rememberSeen(key: string, url: string): Promise<void> {
+  const items = (await readSeen()).filter(item => item.key !== key);
+  items.push({ key, url, seenAt: new Date().toISOString() });
+  await chrome.storage.local.set({ [SEEN_KEY]: items.slice(-MAX_SEEN) });
+}
+
 async function enqueue(packet: ContentPacket, error: unknown): Promise<void> {
   const queue = await readQueue();
   const existing = queue.find(item => item.packet.captureId === packet.captureId);
@@ -30,43 +69,35 @@ async function enqueue(packet: ContentPacket, error: unknown): Promise<void> {
     existing.attempts += 1;
     existing.lastError = message;
   } else {
-    queue.push({
-      packet,
-      attempts: 1,
-      lastError: message,
-      queuedAt: new Date().toISOString()
-    });
+    queue.push({ packet, attempts: 1, lastError: message, queuedAt: new Date().toISOString() });
   }
   await writeQueue(queue);
 }
 
+async function authHeaders(json = false): Promise<Record<string, string>> {
+  const settings = await loadSettings();
+  const headers: Record<string, string> = {};
+  if (json) headers['Content-Type'] = 'application/json';
+  if (settings.authToken) headers.Authorization = `Bearer ${settings.authToken}`;
+  return headers;
+}
+
 async function postPacket(packet: ContentPacket): Promise<SubmitResult> {
   const settings = await loadSettings();
-  const url = `${settings.agentUrl.replace(/\/+$/, '')}/v1/captures`;
-
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 20_000);
 
   try {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'X-DCA-Protocol': packet.protocolVersion
-    };
-    if (settings.authToken) {
-      headers.Authorization = `Bearer ${settings.authToken}`;
-    }
-
-    const response = await fetch(url, {
+    const headers = await authHeaders(true);
+    headers['X-DCA-Protocol'] = packet.protocolVersion;
+    const response = await fetch(`${settings.agentUrl.replace(/\/+$/, '')}/v1/captures`, {
       method: 'POST',
       headers,
       body: JSON.stringify(packet),
       signal: controller.signal
     });
-
     const body = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(body?.error || `Local agent returned HTTP ${response.status}`);
-    }
+    if (!response.ok) throw new Error(body?.error || `Local agent returned HTTP ${response.status}`);
     return body as SubmitResult;
   } finally {
     clearTimeout(timeout);
@@ -75,14 +106,25 @@ async function postPacket(packet: ContentPacket): Promise<SubmitResult> {
 
 async function submit(packet: ContentPacket): Promise<{ queued: boolean; result?: SubmitResult; error?: string }> {
   try {
-    const result = await postPacket(packet);
-    return { queued: false, result };
+    return { queued: false, result: await postPacket(packet) };
   } catch (error) {
     await enqueue(packet, error);
-    return {
-      queued: true,
-      error: error instanceof Error ? error.message : String(error)
-    };
+    return { queued: true, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+async function submitAuto(packet: ContentPacket): Promise<{ queued?: boolean; skipped?: boolean; reason?: string }> {
+  const key = dedupKey(packet);
+  if (!key) return submit(packet);
+  if (inFlight.has(key) || await isSeen(key)) return { skipped: true, reason: 'duplicate-content' };
+
+  inFlight.add(key);
+  try {
+    const result = await submit(packet);
+    await rememberSeen(key, packet.source.url);
+    return result;
+  } finally {
+    inFlight.delete(key);
   }
 }
 
@@ -105,6 +147,28 @@ async function retryQueue(): Promise<void> {
   await writeQueue(remaining);
 }
 
+async function postActivePage(page: ActivePage, sender: chrome.runtime.MessageSender): Promise<void> {
+  const settings = await loadSettings();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5_000);
+  try {
+    await fetch(`${settings.agentUrl.replace(/\/+$/, '')}/v1/browser/active`, {
+      method: 'POST',
+      headers: await authHeaders(true),
+      body: JSON.stringify({
+        ...page,
+        tabId: sender.tab?.id,
+        windowId: sender.tab?.windowId
+      }),
+      signal: controller.signal
+    });
+  } catch {
+    // Follow Browser state is ephemeral. Capture delivery has its own durable queue.
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function health(): Promise<{ ok: boolean; error?: string }> {
   const settings = await loadSettings();
   try {
@@ -116,6 +180,15 @@ async function health(): Promise<{ ok: boolean; error?: string }> {
   }
 }
 
+function notifyNavigation(tabId: number, url?: string): void {
+  if (url && !isSupportedPageUrl(url)) return;
+  void chrome.tabs.sendMessage(tabId, { type: 'DCA_NAVIGATION', url }).catch(() => undefined);
+}
+
+function notifyActive(tabId: number): void {
+  void chrome.tabs.sendMessage(tabId, { type: 'DCA_TAB_ACTIVE' }).catch(() => undefined);
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   void chrome.alarms.create(RETRY_ALARM, { periodInMinutes: 1 });
 });
@@ -125,14 +198,41 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 chrome.alarms.onAlarm.addListener(alarm => {
-  if (alarm.name === RETRY_ALARM) {
-    void retryQueue();
-  }
+  if (alarm.name === RETRY_ALARM) void retryQueue();
 });
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.webNavigation.onHistoryStateUpdated.addListener(details => {
+  if (details.frameId === 0) notifyNavigation(details.tabId, details.url);
+});
+
+chrome.webNavigation.onReferenceFragmentUpdated.addListener(details => {
+  if (details.frameId === 0) notifyNavigation(details.tabId, details.url);
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === 'complete') notifyNavigation(tabId, tab.url);
+});
+
+chrome.tabs.onActivated.addListener(activeInfo => notifyActive(activeInfo.tabId));
+
+chrome.windows.onFocusChanged.addListener(windowId => {
+  if (windowId === chrome.windows.WINDOW_ID_NONE) return;
+  void chrome.tabs.query({ active: true, windowId }).then(([tab]) => {
+    if (tab?.id) notifyActive(tab.id);
+  });
+});
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'DCA_SUBMIT_PACKET') {
     void submit(message.packet as ContentPacket).then(sendResponse);
+    return true;
+  }
+  if (message?.type === 'DCA_AUTO_PACKET') {
+    void submitAuto(message.packet as ContentPacket).then(sendResponse);
+    return true;
+  }
+  if (message?.type === 'DCA_ACTIVE_PAGE') {
+    void postActivePage(message.page as ActivePage, sender).then(() => sendResponse({ ok: true }));
     return true;
   }
   if (message?.type === 'DCA_CHECK_HEALTH') {
