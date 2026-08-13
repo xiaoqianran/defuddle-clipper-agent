@@ -1,0 +1,20 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+Thumbs.db
+
+# Go
+apps/agent/clipper-agent
+apps/agent/coverage.out
+
+# Local agent data/config
+.env
+.env.*
+!.env.example
+data/
+captures/
+
+# IDE
+.idea/
+.vscode/
