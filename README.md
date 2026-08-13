@@ -80,6 +80,7 @@ Wails + Svelte 桌面应用
 - 当 Defuddle 提供 transcript 数据时的 transcript 视图
 - 实时活动浏览器状态
 - 桌面前端已纳入根目录 npm typecheck/build CI
+- Windows 原生 Wails 打包 CI（Actions artifact `windows-amd64`）
 
 P2 内仍计划：
 
@@ -87,7 +88,7 @@ P2 内仍计划：
 - 渲染后的 Markdown / 清洗后的 HTML 模式
 - 桌面端对 Auto Capture 与队列状态的控制
 - 归档与 AI 的桌面设置
-- 原生 Wails 打包 CI
+- macOS / Linux 原生打包 CI
 
 目前桌面应用连接独立运行的本地 agent。这样在嵌入式运行时重构期间，UI/数据边界可以保持稳定。
 
@@ -208,6 +209,38 @@ wails dev
 ```
 
 仓库锁定 Wails v2.12.0，因为现有项目使用 Go 1.22；更新的 Wails v2.13.0 模块需要 Go 1.25。
+
+## Windows 打包
+
+桌面阅读器可用 Wails CLI 打成 Windows exe。打包 **不会** 把 Go agent 嵌进桌面进程。
+
+本地（PowerShell）：
+
+```powershell
+go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+cd apps/desktop
+wails build
+```
+
+`wails build` 会按 `wails.json` 运行 `frontend:install` / `frontend:build`。产物默认在：
+
+```text
+apps/desktop/build/bin/defuddle-browser-mirror.exe
+```
+
+GitHub Actions：推送到 `main`、推送 `v*` 标签、或手动 `workflow_dispatch` 会运行 `.github/workflows/windows-desktop.yml`。到仓库 **Actions** 页打开对应 run，下载 `windows-amd64` artifact。其中包含：
+
+- `defuddle-browser-mirror.exe`（Wails 桌面阅读器）
+- `clipper-agent.exe`（独立 Go agent）
+- 若 runner 上 NSIS 可用，还会有安装包
+
+完整使用仍需三件套，桌面 exe 只是阅读器：
+
+1. 本机先跑 `clipper-agent.exe`（`DCA_DATA_DIR`、`DCA_TOKEN` 等环境变量与开发时相同；默认 `http://127.0.0.1:27123`）
+2. 浏览器中另行加载扩展（`apps/extension/dist`）
+3. 再打开 `defuddle-browser-mirror.exe`
+
+Windows 10+ 通常已自带 WebView2 Runtime，构建机与最终用户一般不必再装自定义 bootstrapper。若个别机器缺少 WebView2，从 Microsoft 安装官方运行时即可。
 
 ## 桌面行为
 
