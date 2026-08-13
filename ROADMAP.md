@@ -1,106 +1,162 @@
 # Roadmap
 
-The roadmap is capability-driven. A phase is complete only when the feature is usable end-to-end and tested.
+The product goal is: **automatically mirror pages the user browses into a large local desktop application**.
 
-## P0 — Durable capture pipeline
+## P0 — Transport foundation
 
-**Status: implemented in initial repository scaffold.**
+**Status: implemented and CI-verified.**
 
 - [x] MV3 extension
 - [x] Defuddle extraction
-- [x] Markdown conversion
-- [x] extractor variables / transcript forwarding
-- [x] ContentPacket v1 schema
+- [x] ContentPacket v1
 - [x] localhost HTTP transport
-- [x] optional Bearer auth
-- [x] extension offline/retry queue
+- [x] retry queue
 - [x] raw-first filesystem persistence
-- [x] OpenAI-compatible provider
-- [x] long-document chunk + synthesis
-- [x] Markdown rendering
-- [x] idempotency by captureId
-- [x] Go tests
-- [x] CI
+- [x] optional OpenAI-compatible analysis
+- [x] tests and CI
+
+P0 proves the transport path. It is not the final UX.
+
+## P1 — Automatic browser capture
+
+**Highest priority.**
+
+- [ ] auto-capture normal page loads
+- [ ] active-tab tracking
+- [ ] SPA navigation detection (`pushState`, `replaceState`, `popstate`)
+- [ ] URL-change fallback
+- [ ] debounce and DOM-stability coordinator
+- [ ] configurable minimum dwell time
+- [ ] canonical URL normalization
+- [ ] content fingerprint and dedup
+- [ ] suppress duplicate captures caused by DOM noise
+- [ ] send active-page events for Follow Browser
+- [ ] pause/resume Auto Capture
+- [ ] domain allowlist / denylist
+- [ ] ignore unsupported browser URLs
+- [ ] manual `Capture now` remains only as fallback/debug
+- [ ] keep persistent retry delivery
 
 Acceptance:
 
 ```text
-page → extension → Defuddle → ContentPacket → local agent
-     → packet.json/source.md → optional AI → note.md
+open page A → local receives A automatically
+SPA navigation to B → local receives B automatically
+scroll / ad refresh / DOM noise → no capture flood
+switch active tab → local Follow Browser state changes
 ```
 
-An unavailable AI provider must not lose the capture.
+## P2 — Local desktop application
 
-## P1 — Rich capture
+Preferred stack: **Wails + Go + Svelte**.
 
-- [ ] selection-only capture mode
-- [ ] highlights and annotations
-- [ ] page screenshot reference
-- [ ] image discovery
-- [ ] local image downloader
-- [ ] deterministic asset names
-- [ ] HTML snapshot option
-- [ ] capture provenance and extractor diagnostics
+- [ ] `apps/desktop` scaffold
+- [ ] reuse/embed existing Go core
+- [ ] desktop lifecycle owns the local capture endpoint
+- [ ] History pane
+- [ ] large Reader pane
+- [ ] AI / Notes pane
+- [ ] Follow Browser mode
+- [ ] Archive All mode
+- [ ] live current-page state
+- [ ] capture status
+- [ ] pause Auto Capture from desktop
+- [ ] search box
+- [ ] render cleaned Markdown/HTML
+- [ ] transcript view for video pages
+- [ ] capture/data/AI settings
+- [ ] desktop build CI
 
-## P2 — Processing quality
+Acceptance:
 
-- [ ] semantic Markdown chunker
-- [ ] page-type-specific analysis schemas
-- [ ] prompt registry
-- [ ] model/provider registry
-- [ ] retry/backoff
-- [ ] processing job state
-- [ ] reprocess an existing packet
-- [ ] prompt/model provenance stored with analysis
-- [ ] configurable output templates
+```text
+browse in Chrome/Edge
+→ desktop History updates automatically
+→ Reader follows active browser page
+→ normal use does not require a browser popup
+```
 
-## P3 — Local knowledge store
+## P3 — Durable page archive
 
+- [ ] `source.html`
+- [ ] optional `raw.html`
+- [ ] image/asset discovery
+- [ ] local asset download
+- [ ] deterministic asset naming
+- [ ] rewrite Markdown/HTML references to local assets
+- [ ] capture provenance / extractor diagnostics
 - [ ] SQLite catalog
 - [ ] migrations
-- [ ] canonical URL normalization
-- [ ] duplicate detection
 - [ ] full-text search
+- [ ] duplicate/collision policy
+- [ ] rebuild database from filesystem artifacts
+
+Target capture:
+
+```text
+capture/
+├── packet.json
+├── source.md
+├── source.html
+├── raw.html          # optional
+├── analysis.json     # derived
+├── note.md           # derived
+└── assets/
+```
+
+## P4 — AI understanding
+
+Auto Capture and Auto AI stay independent.
+
+- [ ] processing job state
+- [ ] prompt registry/versioning
+- [ ] provider/model registry
+- [ ] retry/backoff
+- [ ] semantic Markdown chunker
+- [ ] reprocess existing `packet.json`
+- [ ] processor registry: article, documentation, repository, video, paper, discussion, generic
+- [ ] stable structured AIResult
+- [ ] model/provider/prompt provenance
+- [ ] Auto AI rules by page type, dwell time, size and user policy
+
+## P5 — Knowledge layer
+
 - [ ] tags/concepts index
 - [ ] related captures
-- [ ] import existing Markdown
-
-## P4 — Semantic knowledge
-
 - [ ] embedding provider interface
-- [ ] vector storage
 - [ ] semantic search
 - [ ] related-note edges
 - [ ] cluster/topic views
-- [ ] incremental re-embedding
+- [ ] rebuildable embeddings
 
-## P5 — Agent surface
+## P6 — Agent / automation surface
 
 - [ ] MCP server
-- [ ] `capture`, `search`, `read`, `reprocess` tools
+- [ ] `capture`, `search`, `read`, `reprocess`
 - [ ] CLI
-- [ ] WebSocket/SSE processing events
+- [ ] WebSocket/SSE events
 - [ ] external automation API
-- [ ] health/status diagnostics
 
-## P6 — Capture ecosystem
+## P7 — Capture ecosystem
 
-- [ ] Firefox packaging
+- [ ] Firefox
 - [ ] Safari investigation
-- [ ] Native Messaging transport
-- [ ] optional SingleFile archive adapter
-- [ ] optional yt-dlp fallback for unsupported transcript/video cases
-- [ ] RSS/URL ingestion without browser
-- [ ] batch capture
+- [ ] Native Messaging
+- [ ] optional SingleFile adapter
+- [ ] optional yt-dlp fallback
+- [ ] RSS/URL ingestion
+- [ ] batch import
 
 ## Explicit non-goals
 
-Until P3/P4, do not turn the project into:
+The project is not an Obsidian-specific app, browser-popup reader, cloud SaaS, general crawler, or vector database-first product.
 
-- a general-purpose note editor
-- an Obsidian clone
-- a cloud SaaS
-- a crawler platform
-- a vector database
+Core product:
 
-The project remains a capture/process/knowledge bridge.
+```text
+browser activity
+→ automatic local copy
+→ large desktop reader/history
+→ optional AI
+→ durable personal web archive
+```
