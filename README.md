@@ -2,261 +2,311 @@
 
 A local-first **browser mirror and web inbox**.
 
-The browser extension is intentionally tiny and mostly headless. The real product is a large local desktop application that automatically receives, archives, reads, and optionally analyzes the pages you visit.
-
-## Product goal
+The browser extension is intentionally small and mostly headless. The primary UI is a large local desktop reader that follows what you browse, keeps a durable history, and can show optional AI-derived notes.
 
 ```text
-You browse normally in Chrome / Edge
-              ↓
-      page / SPA navigation
-              ↓
-      headless MV3 extension
-              ↓
-          Defuddle
-              ↓
-       ContentPacket v1
-              ↓
-        localhost HTTP
-              ↓
-┌────────────────────────────────────────────┐
-│              Local Desktop App             │
-│                                            │
-│  History        Reader          AI / Notes │
-│  GitHub         full page       summary    │
-│  Zhihu          Markdown/HTML   key points │
-│  Bilibili       transcript      concepts   │
-│  arXiv          code/tables     questions  │
-└────────────────────────────────────────────┘
-              ↓
-        local durable archive
+Chrome / Edge
+    ↓ normal page load / SPA navigation / active-tab switch
+MV3 browser sensor
+    ↓
+Defuddle
+    ↓
+ContentPacket v1
+    ↓ localhost
+Go local agent
+    ├─ durable archive
+    ├─ current browser state
+    ├─ History / Reader API
+    └─ optional AI
+    ↓
+Wails + Svelte desktop app
+    ├─ History
+    ├─ large Reader
+    ├─ Follow Browser
+    ├─ Transcript
+    └─ AI / Notes
 ```
 
-The intended interaction is **not** `open page → click a tiny browser popup → read inside the extension`.
-
-It is:
+The intended interaction is:
 
 ```text
-open page → page is copied automatically → local app follows the browser
+open a page in the browser
+→ it is copied automatically
+→ it appears in local History
+→ the large Reader follows the active browser page
 ```
 
-## Product principles
+There is no Obsidian requirement. `DCA_DATA_DIR` can be any normal local folder.
 
-1. **Auto-capture first.** Normal browsing should be enough; manual capture is only a fallback.
-2. **Browser is a sensor, desktop is the product.** Reading, history, AI, files, search and configuration live locally.
-3. **Local-first and destination-neutral.** Obsidian is optional. Plain local files are the default durable format.
-4. **Capture everything, analyze selectively.** Auto Capture can be always-on while Auto AI remains off or rule-driven.
-5. **Raw source before enrichment.** AI/provider failures must never lose a captured page.
-6. **Defuddle is upstream.** Use its generic and site-specific extractors instead of rebuilding extraction.
-7. **Stable protocol boundary.** Browser, desktop UI, storage and AI providers remain replaceable.
+## Current status
 
-## Current state: P0 transport foundation
+### P0 — transport and persistence ✅
 
-Already implemented and CI-verified:
+- Defuddle extraction and Markdown conversion
+- ContentPacket v1
+- localhost HTTP transport
+- persistent extension retry queue
+- raw-first filesystem persistence
+- optional OpenAI-compatible AI
+- long-document chunk + synthesis
+- tests and CI
 
-- Chromium MV3 extension written in TypeScript.
-- Defuddle extraction and Markdown conversion.
-- Metadata, Schema.org and extractor variables, including transcript when Defuddle provides it.
-- Versioned `ContentPacket` v1 contract.
-- `localhost` delivery with optional Bearer token.
-- Extension-side persistent retry queue when the local agent is unavailable.
-- Go local agent with no third-party runtime dependencies.
-- Raw `packet.json` and `source.md` persisted before AI.
-- OpenAI-compatible optional analysis.
-- Long-document chunk + synthesis.
-- Idempotency by `captureId`.
-- Security checks for loopback binding and capture paths.
-- Go tests and GitHub Actions CI.
+### P1 — automatic browser mirror ✅
 
-P0 proves transport and persistence. It still uses an explicit capture action and does **not yet** implement the final interaction model.
+- normal page loads are captured automatically
+- History API / SPA navigation is observed through `webNavigation`
+- active-tab/window focus state is reported for Follow Browser
+- capture delay + DOM-stability check
+- canonical URL normalization
+- content fingerprint deduplication
+- duplicate suppression for noisy page updates
+- pause/resume Auto Capture
+- domain allowlist / denylist
+- unsupported browser URLs ignored
+- manual **Capture now** kept only as fallback/debug
 
-## Next milestone: automatic browser mirror
+### P2 — first desktop Reader ✅ / partial
 
-```text
-Browser navigation
-  ↓
-URL / SPA change detection
-  ↓
-debounce + DOM stability
-  ↓
-Defuddle extraction
-  ↓
-content fingerprint / dedup
-  ↓
-automatic local delivery
-  ↓
-Desktop History + Reader follows current browser page
-```
+Implemented:
 
-Required behaviors:
+- `apps/desktop` Wails + Svelte application
+- 1500×950 large desktop window
+- filesystem-backed History API
+- single-capture Reader API
+- History/search pane
+- large Reader pane
+- AI / Notes pane
+- Follow Browser mode
+- transcript view when Defuddle provides transcript data
+- live active-browser state
+- desktop frontend included in root npm typecheck/build CI
 
-- capture normal page loads automatically;
-- detect SPA navigation (`pushState`, `replaceState`, `popstate`, URL changes);
-- avoid repeated captures caused by ads, scrolling or incremental DOM mutations;
-- configurable debounce / minimum dwell time;
-- pause switch, allowlist and denylist;
-- ignore browser-internal/private pages by default;
-- manual **Capture now** remains available only as a fallback;
-- local desktop UI becomes the primary user-facing interface.
+Still planned inside P2:
 
-See [`ROADMAP.md`](ROADMAP.md).
+- embed the Go agent lifecycle into the desktop process
+- rendered Markdown / cleaned HTML mode
+- desktop controls for Auto Capture and queue state
+- desktop settings for archive and AI
+- native Wails packaging CI
 
-## Target repository layout
+For now the desktop app connects to the standalone local agent. This keeps the UI/data boundary stable while the embedded runtime is refactored.
+
+## Repository layout
 
 ```text
 .
 ├── apps/
-│   ├── extension/          # headless browser sensor / capture bridge
-│   ├── agent/              # Go core + localhost service (current P0)
-│   └── desktop/            # Wails + Svelte local UI (next)
+│   ├── extension/          # automatic browser sensor
+│   ├── agent/              # Go localhost service + archive/AI
+│   └── desktop/            # Wails + Svelte large local reader
 ├── packages/
-│   └── protocol/           # versioned ContentPacket contract
+│   └── protocol/           # ContentPacket v1 JSON schema
 ├── docs/
 │   ├── ARCHITECTURE.md
 │   ├── SECURITY.md
 │   └── REFERENCES.md
-├── .github/workflows/
 ├── AGENTS.md
 └── ROADMAP.md
 ```
 
-The current standalone agent is kept because its core services are useful. The desktop application should progressively embed/reuse that Go core rather than create a second implementation.
+## Quick start — Windows / PowerShell
 
-## Local archive model
+### 1. Build the extension and desktop frontend
 
-Obsidian is **not required**. `DCA_DATA_DIR` can point to any normal folder.
+Requirements: Node.js 20+.
+
+```powershell
+git clone https://github.com/xiaoqianran/defuddle-clipper-agent.git
+cd defuddle-clipper-agent
+
+npm install
+npm run typecheck
+npm run build
+```
+
+`npm run build` builds both:
+
+```text
+apps/extension/dist
+apps/desktop/frontend/dist
+```
+
+### 2. Start the local agent
+
+Requirements: Go 1.22+.
+
+Open a PowerShell window:
+
+```powershell
+cd apps/agent
+
+$env:DCA_DATA_DIR="$HOME\dca-data"
+$env:DCA_TOKEN="replace-with-a-long-random-token"
+
+go run ./cmd/clipper-agent
+```
+
+Default endpoint:
+
+```text
+http://127.0.0.1:27123
+```
+
+Health check from another PowerShell:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:27123/health
+```
+
+### 3. Load the extension
+
+Open:
+
+```text
+chrome://extensions
+```
+
+Then:
+
+```text
+Developer mode
+→ Load unpacked
+→ select apps/extension/dist
+```
+
+Open extension settings and use:
+
+```text
+Agent URL: http://127.0.0.1:27123
+Token:     same value as DCA_TOKEN
+Auto Capture: ON
+Follow Browser: ON
+```
+
+After this, normal browsing is enough. You do not need to press **Capture now**.
+
+### 4. Start the large desktop Reader
+
+Open another PowerShell from the repository:
+
+```powershell
+cd apps/desktop
+
+$env:DCA_TOKEN="replace-with-a-long-random-token"
+
+go mod tidy
+go run .
+```
+
+The desktop window reads from the same local agent.
+
+For Wails hot-reload development, install the pinned compatible CLI:
+
+```powershell
+go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+wails dev
+```
+
+The repository pins Wails v2.12.0 because the existing project uses Go 1.22; the newer Wails v2.13.0 module requires Go 1.25.
+
+## Desktop behavior
+
+### Follow Browser
+
+When enabled:
+
+```text
+active browser tab changes
+→ extension reports current URL/title
+→ desktop polls local browser state
+→ matching mirrored capture opens in Reader
+```
+
+If the page is still being extracted, the desktop waits until it appears in History.
+
+### Inspect old history
+
+Clicking an older History item intentionally disables Follow Browser, so the Reader does not immediately jump back to the current browser tab.
+
+Re-enable **Follow Browser** when you want the Reader to track the browser again.
+
+### Transcript
+
+When Defuddle exposes a video transcript through extractor variables, the capture carries it in:
+
+```text
+ContentPacket.media.transcript
+```
+
+The desktop Reader then exposes a **Transcript** tab.
+
+## Local archive
 
 ```text
 <DCA_DATA_DIR>/
 └── captures/
     └── YYYY/MM/DD/<capture-id>/
-        ├── packet.json       # canonical structured capture
-        ├── source.md         # cleaned text for reading/search/AI
-        ├── source.html       # planned: cleaned HTML for local reader
-        ├── raw.html          # planned/optional: stronger source fidelity
-        ├── analysis.json     # optional derived AI result
-        ├── note.md           # optional rendered derivative
-        └── assets/           # planned localized images/assets
+        ├── packet.json
+        ├── source.md
+        ├── analysis.json       # optional AI derivative
+        ├── analysis-error.txt  # if AI fails
+        └── note.md
 ```
 
-Filesystem artifacts remain portable and inspectable. Future SQLite/FTS/embedding indexes are derived catalogs and must be rebuildable.
+`packet.json` and `source.md` are written before AI runs. AI failure therefore does not lose the captured page.
 
-## Run the current P0 agent
-
-Requirements: Go 1.22+.
-
-```bash
-cd apps/agent
-
-export DCA_DATA_DIR="$HOME/dca-data"
-export DCA_TOKEN="replace-with-a-long-random-token"
-
-go run ./cmd/clipper-agent
-```
-
-Default address: `127.0.0.1:27123`.
-
-Health check:
-
-```bash
-curl http://127.0.0.1:27123/health
-```
-
-### Optional AI
-
-AI is disabled by default and remains independent from automatic capture.
-
-```bash
-export DCA_AI_ENABLED=true
-export DCA_OPENAI_BASE_URL="https://api.example.com/v1"
-export DCA_OPENAI_API_KEY="..."
-export DCA_OPENAI_MODEL="your-model-id"
-```
-
-Long term, Auto AI is rule-driven, for example:
+Planned P3 additions:
 
 ```text
-paper       → always
-repository  → optional
-video       → if transcript exists
-article     → if dwell time / length threshold is met
-search page → never
+source.html
+raw.html
+assets/
+SQLite catalog
+full-text search
 ```
 
-## Build the current extension
+The filesystem remains primary data; future indexes must be rebuildable.
 
-Requirements: Node.js 20+.
+## Local APIs
 
-```bash
-npm install
-npm run build
-```
-
-Load `apps/extension/dist` from `chrome://extensions` → **Developer mode** → **Load unpacked**.
-
-Current P0 still exposes manual capture. This UI is transitional; the target extension is headless except for status/settings/pause controls.
-
-## Desktop application direction
-
-Preferred stack:
+Current important endpoints:
 
 ```text
-Wails
-├── Go core
-│   ├── localhost capture server
-│   ├── archive services
-│   ├── processing jobs
-│   ├── search/indexing
-│   └── AI providers
-└── Svelte UI
-    ├── History
-    ├── Reader
-    ├── AI / Notes
-    ├── Follow Browser
-    └── Settings
+GET  /health
+POST /v1/captures
+GET  /v1/captures?limit=100
+GET  /v1/captures/{captureId}
+POST /v1/browser/active
+GET  /v1/browser/state
 ```
 
-Primary UI concept:
+The desktop uses these APIs through its Go bridge; the Svelte UI never receives the Bearer token directly.
 
-```text
-┌──────────────────────────────────────────────────────────────┐
-│ Search                     Auto Capture ●   Auto AI ○       │
-├──────────────┬────────────────────────────┬──────────────────┤
-│ HISTORY      │ READER                     │ AI / NOTES       │
-│ GitHub       │ cleaned page / Markdown    │ summary          │
-│ Zhihu        │ images / code / tables     │ key points       │
-│ Bilibili     │ transcript                 │ concepts         │
-│ arXiv        │                            │ questions        │
-├──────────────┴────────────────────────────┴──────────────────┤
-│ current source URL · capture time · extractor · status      │
-└──────────────────────────────────────────────────────────────┘
+## Optional AI
+
+Automatic capture and AI are independent. AI is disabled by default.
+
+```powershell
+$env:DCA_AI_ENABLED="true"
+$env:DCA_OPENAI_BASE_URL="https://api.example.com/v1"
+$env:DCA_OPENAI_API_KEY="..."
+$env:DCA_OPENAI_MODEL="your-model-id"
 ```
 
-Two core modes:
+A captured source is still saved if the provider is down.
 
-- **Follow Browser** — local Reader switches to the page currently active in the browser.
-- **Archive All** — every eligible page becomes part of the searchable local history.
+## Design rules
 
-## Explicit non-goals
+1. **Browser is a sensor; desktop is the product.**
+2. **Capture first, enrich second.**
+3. **Plain files are the default durable format.**
+4. **Obsidian is optional, never a dependency.**
+5. **Auto Capture and Auto AI are separate policies.**
+6. **Defuddle stays upstream; do not fork extraction into this repo.**
+7. **ContentPacket is the stable browser/local boundary.**
+8. **Derived AI/search artifacts must be rebuildable.**
 
-The project is not:
-
-- an Obsidian plugin or Obsidian clone;
-- a browser-popup reading application;
-- a cloud SaaS;
-- a general crawler that indiscriminately fetches the public web;
-- a vector database with a capture feature bolted on.
-
-It is a **local web inbox / browser mirror**: automatically copy what the user actually browses, preserve it locally, present it in a large desktop reader, and add AI/knowledge capabilities on top.
-
-## Development
-
-```bash
-make test
-make build
-```
-
-Architecture rules are in [`AGENTS.md`](AGENTS.md).
+See [`ROADMAP.md`](ROADMAP.md) for the remaining P2 work and P3–P7 plan.
 
 ## License
 
