@@ -15,29 +15,27 @@ The product goal is: **automatically mirror pages the user browses into a large 
 - [x] optional OpenAI-compatible analysis
 - [x] tests and CI
 
-P0 proves the transport path. It is not the final UX.
-
 ## P1 — Automatic browser capture
 
-**Highest priority.**
+**Status: implemented and CI-verified.**
 
-- [ ] auto-capture normal page loads
-- [ ] active-tab tracking
-- [ ] SPA navigation detection (`pushState`, `replaceState`, `popstate`)
-- [ ] URL-change fallback
-- [ ] debounce and DOM-stability coordinator
-- [ ] configurable minimum dwell time
-- [ ] canonical URL normalization
-- [ ] content fingerprint and dedup
-- [ ] suppress duplicate captures caused by DOM noise
-- [ ] send active-page events for Follow Browser
-- [ ] pause/resume Auto Capture
-- [ ] domain allowlist / denylist
-- [ ] ignore unsupported browser URLs
-- [ ] manual `Capture now` remains only as fallback/debug
-- [ ] keep persistent retry delivery
+- [x] auto-capture normal page loads
+- [x] active-tab tracking
+- [x] SPA/history navigation detection
+- [x] URL-change fallback
+- [x] capture delay and DOM-stability coordinator
+- [ ] true active dwell-time policy
+- [x] canonical URL normalization
+- [x] content fingerprint and dedup
+- [x] suppress duplicate captures caused by DOM noise
+- [x] send active-page events for Follow Browser
+- [x] pause/resume Auto Capture
+- [x] domain allowlist / denylist
+- [x] ignore unsupported browser URLs
+- [x] manual `Capture now` only as fallback/debug
+- [x] persistent retry delivery
 
-Acceptance:
+Acceptance achieved:
 
 ```text
 open page A → local receives A automatically
@@ -48,32 +46,37 @@ switch active tab → local Follow Browser state changes
 
 ## P2 — Local desktop application
 
-Preferred stack: **Wails + Go + Svelte**.
+**Status: first usable reader implemented.** Stack: **Wails + Go + Svelte**.
 
-- [ ] `apps/desktop` scaffold
-- [ ] reuse/embed existing Go core
+- [x] `apps/desktop` scaffold
+- [x] local-only Go client for the existing agent
+- [x] filesystem-backed History API
+- [x] single-capture Reader API
+- [x] History pane
+- [x] large Reader pane
+- [x] AI / Notes pane
+- [x] Follow Browser mode
+- [x] live current-page state
+- [x] search box
+- [x] transcript view for video pages
+- [x] frontend typecheck/build included in CI
+- [ ] embed/reuse the agent runtime inside the desktop process
 - [ ] desktop lifecycle owns the local capture endpoint
-- [ ] History pane
-- [ ] large Reader pane
-- [ ] AI / Notes pane
-- [ ] Follow Browser mode
-- [ ] Archive All mode
-- [ ] live current-page state
-- [ ] capture status
+- [ ] Archive All control in desktop UI
+- [ ] detailed capture/queue status
 - [ ] pause Auto Capture from desktop
-- [ ] search box
-- [ ] render cleaned Markdown/HTML
-- [ ] transcript view for video pages
-- [ ] capture/data/AI settings
-- [ ] desktop build CI
+- [ ] rendered Markdown/cleaned HTML reader mode
+- [ ] capture/data/AI settings UI
+- [ ] native Wails packaging CI
 
-Acceptance:
+Current acceptance:
 
 ```text
 browse in Chrome/Edge
 → desktop History updates automatically
 → Reader follows active browser page
-→ normal use does not require a browser popup
+→ manual History selection exits Follow Browser
+→ normal reading does not happen inside the browser popup
 ```
 
 ## P3 — Durable page archive
