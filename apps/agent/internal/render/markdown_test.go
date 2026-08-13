@@ -27,4 +27,9 @@ func TestMarkdown(t *testing.T) {
 			t.Fatalf("render missing %q:\n%s", want, got)
 		}
 	}
+
+	pending := PendingMarkdown(packet)
+	if !strings.Contains(pending, "Analysis is pending") {
+		t.Fatalf("pending render missing status:\n%s", pending)
+	}
 }

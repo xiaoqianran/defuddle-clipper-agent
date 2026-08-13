@@ -276,6 +276,7 @@ GET  /health
 POST /v1/captures
 GET  /v1/captures?limit=100
 GET  /v1/captures/{captureId}
+POST /v1/captures/{captureId}/reprocess
 POST /v1/browser/active
 GET  /v1/browser/state
 ```

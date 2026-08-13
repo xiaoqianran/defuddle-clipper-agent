@@ -2,27 +2,93 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/ai"
 	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/browserstate"
 	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/capture"
 	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/protocol"
 	"github.com/xiaoqianran/defuddle-clipper-agent/apps/agent/internal/storage"
 )
 
+type fakeAnalyzer struct {
+	calls   atomic.Int32
+	summary atomic.Value
+}
+
+func (f *fakeAnalyzer) Analyze(context.Context, protocol.ContentPacket) (ai.Analysis, error) {
+	f.calls.Add(1)
+	summary, _ := f.summary.Load().(string)
+	if summary == "" {
+		summary = "http-ok"
+	}
+	return ai.Analysis{Summary: summary}, nil
+}
+
 func testServer(t *testing.T) http.Handler {
 	t.Helper()
 	server := Server{
 		Token:        "secret",
 		MaxBodyBytes: 1 << 20,
-		Captures: capture.Service{
-			Store: storage.Store{Root: t.TempDir()},
-		},
+		Captures:     capture.New(storage.Store{Root: t.TempDir()}, nil),
 	}
 	return server.Handler()
+}
+
+func testPacket(id string) protocol.ContentPacket {
+	return protocol.ContentPacket{
+		ProtocolVersion: protocol.Version,
+		CaptureID:       id,
+		CapturedAt:      "2026-08-13T10:00:00Z",
+		Source:          protocol.Source{URL: "https://example.com", Title: "Title"},
+		Content:         protocol.Content{Markdown: "Body"},
+	}
+}
+
+func doJSON(t *testing.T, handler http.Handler, method, path, token string, body []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	var req *http.Request
+	if body != nil {
+		req = httptest.NewRequest(method, path, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+	} else {
+		req = httptest.NewRequest(method, path, nil)
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	return w
+}
+
+func waitCaptureStatus(t *testing.T, handler http.Handler, id, want string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	var last string
+	for time.Now().Before(deadline) {
+		w := doJSON(t, handler, http.MethodGet, "/v1/captures/"+id, "secret", nil)
+		if w.Code != http.StatusOK {
+			time.Sleep(5 * time.Millisecond)
+			continue
+		}
+		var view storage.CaptureView
+		if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+			t.Fatal(err)
+		}
+		last = view.AIStatus
+		if last == want {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for aiStatus=%s (last %q)", want, last)
 }
 
 func TestCaptureAuthAndSave(t *testing.T) {
@@ -31,8 +97,8 @@ func TestCaptureAuthAndSave(t *testing.T) {
 		ProtocolVersion: protocol.Version,
 		CaptureID:       "capture-http",
 		CapturedAt:      "2026-08-13T10:00:00Z",
-		Source: protocol.Source{URL: "https://example.com", Title: "Title"},
-		Content: protocol.Content{Markdown: "Body"},
+		Source:          protocol.Source{URL: "https://example.com", Title: "Title"},
+		Content:         protocol.Content{Markdown: "Body"},
 	}
 	body, _ := json.Marshal(packet)
 
@@ -81,5 +147,123 @@ func TestBrowserActiveStateRoundTrip(t *testing.T) {
 	}
 	if !state.Active || state.Page.URL != "https://example.com/docs" || state.Page.Title != "Docs" {
 		t.Fatalf("unexpected state: %+v", state)
+	}
+}
+
+func TestCaptureReturnsDisabledWithoutAnalyzer(t *testing.T) {
+	handler := testServer(t)
+	body, _ := json.Marshal(testPacket("capture-disabled"))
+	w := doJSON(t, handler, http.MethodPost, "/v1/captures", "secret", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var result capture.Result
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.AIStatus != storage.StatusDisabled {
+		t.Fatalf("expected disabled, got %s", result.AIStatus)
+	}
+
+	w = doJSON(t, handler, http.MethodGet, "/v1/captures/capture-disabled", "secret", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var view storage.CaptureView
+	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if view.AIStatus != storage.StatusDisabled {
+		t.Fatalf("GET aiStatus=%s", view.AIStatus)
+	}
+}
+
+func TestCapturePendingThenOKAndReprocess(t *testing.T) {
+	analyzer := &fakeAnalyzer{}
+	analyzer.summary.Store("first")
+	server := Server{
+		Token:        "secret",
+		MaxBodyBytes: 1 << 20,
+		AIEnabled:    true,
+		Captures:     capture.New(storage.Store{Root: t.TempDir()}, analyzer),
+	}
+	handler := server.Handler()
+
+	body, _ := json.Marshal(testPacket("capture-ai"))
+	w := doJSON(t, handler, http.MethodPost, "/v1/captures", "secret", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var result capture.Result
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.AIStatus != storage.StatusPending {
+		t.Fatalf("expected pending, got %s", result.AIStatus)
+	}
+
+	waitCaptureStatus(t, handler, "capture-ai", storage.StatusOK)
+	if analyzer.calls.Load() != 1 {
+		t.Fatalf("expected 1 analyze call, got %d", analyzer.calls.Load())
+	}
+
+	list := doJSON(t, handler, http.MethodGet, "/v1/captures?limit=10", "secret", nil)
+	if list.Code != http.StatusOK {
+		t.Fatalf("list: %d %s", list.Code, list.Body.String())
+	}
+	var history struct {
+		Items []storage.CaptureSummary `json:"items"`
+	}
+	if err := json.Unmarshal(list.Body.Bytes(), &history); err != nil {
+		t.Fatal(err)
+	}
+	if len(history.Items) != 1 || history.Items[0].AIStatus != storage.StatusOK {
+		t.Fatalf("unexpected list: %+v", history.Items)
+	}
+
+	analyzer.summary.Store("second")
+	w = doJSON(t, handler, http.MethodPost, "/v1/captures/capture-ai/reprocess", "secret", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.AIStatus != storage.StatusPending || result.Duplicate {
+		t.Fatalf("unexpected reprocess result: %+v", result)
+	}
+	waitCaptureStatus(t, handler, "capture-ai", storage.StatusOK)
+	if analyzer.calls.Load() != 2 {
+		t.Fatalf("reprocess should analyze again, calls=%d", analyzer.calls.Load())
+	}
+
+	w = doJSON(t, handler, http.MethodGet, "/v1/captures/capture-ai", "secret", nil)
+	var view storage.CaptureView
+	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	analysis, _ := view.Analysis.(map[string]any)
+	if analysis["summary"] != "second" {
+		t.Fatalf("expected reprocessed analysis, got %#v", view.Analysis)
+	}
+}
+
+func TestReprocessNotFoundAndAuth(t *testing.T) {
+	analyzer := &fakeAnalyzer{}
+	server := Server{
+		Token:        "secret",
+		MaxBodyBytes: 1 << 20,
+		Captures:     capture.New(storage.Store{Root: t.TempDir()}, analyzer),
+	}
+	handler := server.Handler()
+
+	unauthorized := doJSON(t, handler, http.MethodPost, "/v1/captures/missing/reprocess", "", nil)
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", unauthorized.Code)
+	}
+
+	missing := doJSON(t, handler, http.MethodPost, "/v1/captures/missing-id/reprocess", "secret", nil)
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", missing.Code, missing.Body.String())
 	}
 }
