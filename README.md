@@ -286,12 +286,26 @@ The desktop uses these APIs through its Go bridge; the Svelte UI never receives 
 
 Automatic capture and AI are independent. AI is disabled by default.
 
+Any OpenAI-compatible `/chat/completions` endpoint works (OpenAI, NVIDIA NIM, vLLM, local servers).
+
 ```powershell
 $env:DCA_AI_ENABLED="true"
 $env:DCA_OPENAI_BASE_URL="https://api.example.com/v1"
 $env:DCA_OPENAI_API_KEY="..."
 $env:DCA_OPENAI_MODEL="your-model-id"
 ```
+
+NVIDIA NIM example. This model is multimodal **text-out**: it can read a cover image with the Markdown, but it does not generate images (`/v1/images/generations` is not used).
+
+```powershell
+$env:DCA_AI_ENABLED="true"
+$env:DCA_OPENAI_BASE_URL="https://integrate.api.nvidia.com/v1"
+$env:DCA_OPENAI_API_KEY=""
+$env:DCA_OPENAI_MODEL="google/diffusiongemma-26b-a4b-it"
+$env:DCA_AI_TIMEOUT_SECONDS="180"
+```
+
+When `ContentPacket.metadata.image` is an `http(s)` URL, the agent forwards it as an OpenAI-style `image_url` part. Data URIs and other non-http schemes are skipped. `analysis.json` records model, provider host, prompt version, whether an image was sent, and the analysis timestamp. API keys are never written to stored files.
 
 A captured source is still saved if the provider is down.
 
