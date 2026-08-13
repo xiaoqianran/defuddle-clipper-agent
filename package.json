@@ -1,0 +1,13 @@
+{
+  "name": "defuddle-clipper-agent",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/extension"
+  ],
+  "scripts": {
+    "build": "npm run build -w @dca/extension",
+    "typecheck": "npm run typecheck -w @dca/extension",
+    "clean": "npm run clean -w @dca/extension"
+  }
+}

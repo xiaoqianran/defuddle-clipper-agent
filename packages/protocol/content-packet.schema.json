@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/xiaoqianran/defuddle-clipper-agent/packages/protocol/content-packet.schema.json",
+  "title": "Defuddle Clipper Agent ContentPacket v1",
+  "type": "object",
+  "required": ["protocolVersion", "captureId", "capturedAt", "source", "content"],
+  "properties": {
+    "protocolVersion": { "const": "1.0" },
+    "captureId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "capturedAt": { "type": "string", "format": "date-time" },
+    "source": {
+      "type": "object",
+      "required": ["url", "title"],
+      "properties": {
+        "url": { "type": "string", "format": "uri" },
+        "title": { "type": "string" },
+        "site": { "type": "string" },
+        "author": { "type": "string" },
+        "published": { "type": "string" },
+        "language": { "type": "string" },
+        "description": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "content": {
+      "type": "object",
+      "required": ["markdown"],
+      "properties": {
+        "markdown": { "type": "string" },
+        "html": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "selection": {
+      "type": "object",
+      "properties": {
+        "markdown": { "type": "string" },
+        "html": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "highlights": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "wordCount": { "type": "integer", "minimum": 0 },
+        "image": { "type": "string" },
+        "favicon": { "type": "string" },
+        "schemaOrg": {},
+        "metaTags": { "type": "array", "items": { "type": "object" } },
+        "variables": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    "media": {
+      "type": "object",
+      "properties": {
+        "transcript": { "type": "string" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width">
+  <title>Defuddle Clipper Agent Settings</title>
+  <style>
+    body { font: 14px system-ui, sans-serif; max-width: 680px; margin: 40px auto; padding: 0 20px; }
+    label { display: block; margin: 18px 0 6px; font-weight: 600; }
+    input[type=text], input[type=password] { width: 100%; box-sizing: border-box; padding: 9px; }
+    button { margin-top: 20px; padding: 9px 18px; }
+    .row { display: flex; gap: 8px; align-items: center; margin-top: 14px; }
+    .hint { color: #666; margin-top: 5px; }
+    #status { margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Defuddle Clipper Agent</h1>
+  <label for="agentUrl">Local agent URL</label>
+  <input id="agentUrl" type="text" spellcheck="false">
+  <div class="hint">Default: http://127.0.0.1:27123</div>
+
+  <label for="authToken">Bearer token</label>
+  <input id="authToken" type="password" autocomplete="off">
+  <div class="hint">Use the same value as DCA_TOKEN.</div>
+
+  <div class="row">
+    <input id="includeHtml" type="checkbox">
+    <label for="includeHtml" style="margin:0;font-weight:400">Include cleaned HTML in ContentPacket</label>
+  </div>
+
+  <button id="save">Save settings</button>
+  <div id="status"></div>
+  <script src="options.js"></script>
+</body>
+</html>

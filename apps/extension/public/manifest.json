@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Defuddle Clipper Agent",
+  "description": "Capture the current page with Defuddle and send it to a local AI knowledge agent.",
+  "version": "0.1.0",
+  "permissions": ["activeTab", "storage", "alarms"],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
