@@ -57,15 +57,21 @@ func (c *OpenAICompatible) Analyze(ctx context.Context, packet protocol.ContentP
 	}
 
 	imageURL := usableCoverImageURL(packet)
+	imageSent := false
+	imageSkipped := ""
 	var analysis Analysis
 	var err error
 	if len(chunks) == 1 {
-		analysis, err = c.analyzeText(ctx, packet.Source.Title, packet.Source.URL, chunks[0],
+		analysis, imageSent, err = c.analyzeText(ctx, packet.Source.Title, packet.Source.URL, chunks[0],
 			"Analyze the complete captured page.", imageURL)
+		if err == nil && imageURL != "" && !imageSent {
+			imageSkipped = ImageSkippedProviderMediaFetch
+		}
 	} else {
 		partials := make([]Analysis, 0, len(chunks))
+		droppedImage := false
 		for i, chunk := range chunks {
-			partial, chunkErr := c.analyzeText(
+			partial, usedImage, chunkErr := c.analyzeText(
 				ctx,
 				packet.Source.Title,
 				packet.Source.URL,
@@ -76,14 +82,25 @@ func (c *OpenAICompatible) Analyze(ctx context.Context, packet protocol.ContentP
 			if chunkErr != nil {
 				return Analysis{}, fmt.Errorf("analyze chunk %d/%d: %w", i+1, len(chunks), chunkErr)
 			}
+			if imageURL != "" && !usedImage {
+				droppedImage = true
+				imageURL = ""
+			}
+			if usedImage {
+				imageSent = true
+			}
 			partials = append(partials, partial)
+		}
+		if droppedImage {
+			imageSent = false
+			imageSkipped = ImageSkippedProviderMediaFetch
 		}
 
 		raw, marshalErr := json.Marshal(partials)
 		if marshalErr != nil {
 			return Analysis{}, marshalErr
 		}
-		analysis, err = c.analyzeText(
+		analysis, _, err = c.analyzeText(
 			ctx,
 			packet.Source.Title,
 			packet.Source.URL,
@@ -95,11 +112,11 @@ func (c *OpenAICompatible) Analyze(ctx context.Context, packet protocol.ContentP
 	if err != nil {
 		return Analysis{}, err
 	}
-	c.attachProvenance(&analysis, imageURL != "")
+	c.attachProvenance(&analysis, imageSent, imageSkipped)
 	return analysis, nil
 }
 
-func (c *OpenAICompatible) analyzeText(ctx context.Context, title, sourceURL, content, instruction, imageURL string) (Analysis, error) {
+func (c *OpenAICompatible) analyzeText(ctx context.Context, title, sourceURL, content, instruction, imageURL string) (Analysis, bool, error) {
 	system := `You are a precise knowledge extraction engine.
 Return ONLY one valid JSON object with exactly this semantic shape:
 {
@@ -121,6 +138,52 @@ Keep tags concise. Arrays may be empty.`
 		instruction, title, sourceURL, content,
 	)
 
+	analysis, err := c.chatCompletions(ctx, system, user, imageURL)
+	if err != nil {
+		if imageURL != "" && isProviderMediaFetchError(err) {
+			analysis, err = c.chatCompletions(ctx, system, user, "")
+			if err != nil {
+				return Analysis{}, false, err
+			}
+			return analysis, false, nil
+		}
+		return Analysis{}, false, err
+	}
+	return analysis, imageURL != "", nil
+}
+
+type providerHTTPError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *providerHTTPError) Error() string {
+	return fmt.Sprintf("provider HTTP %d: %s", e.StatusCode, strings.TrimSpace(e.Body))
+}
+
+func isProviderMediaFetchError(err error) bool {
+	var pe *providerHTTPError
+	if !errors.As(err, &pe) {
+		return false
+	}
+	if pe.StatusCode < 400 || pe.StatusCode >= 500 || pe.StatusCode == http.StatusUnauthorized {
+		return false
+	}
+	return mediaFetchBlocked(pe.Body)
+}
+
+func mediaFetchBlocked(body string) bool {
+	lower := strings.ToLower(body)
+	if strings.Contains(lower, "failed media") || strings.Contains(lower, "fetch media") {
+		return true
+	}
+	if strings.Contains(lower, "upstream returned http 403") || strings.Contains(lower, "upstream returned http 401") {
+		return true
+	}
+	return false
+}
+
+func (c *OpenAICompatible) chatCompletions(ctx context.Context, system, user, imageURL string) (Analysis, error) {
 	reqBody := map[string]any{
 		"model":       c.model,
 		"messages":    []chatMessage{systemMessage(system), userMessage(user, imageURL)},
@@ -151,7 +214,7 @@ Keep tags concise. Arrays may be empty.`
 		return Analysis{}, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return Analysis{}, fmt.Errorf("provider HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return Analysis{}, &providerHTTPError{StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(body))}
 	}
 
 	var envelope struct {
@@ -220,12 +283,13 @@ func usableCoverImageURL(packet protocol.ContentPacket) string {
 	return value
 }
 
-func (c *OpenAICompatible) attachProvenance(analysis *Analysis, imageSent bool) {
+func (c *OpenAICompatible) attachProvenance(analysis *Analysis, imageSent bool, imageSkipped string) {
 	analysis.Provenance = Provenance{
 		Model:         c.model,
 		ProviderHost:  providerHost(c.baseURL),
 		PromptVersion: PromptVersion,
 		ImageSent:     imageSent,
+		ImageSkipped:  imageSkipped,
 		AnalyzedAt:    c.now().Format(time.RFC3339),
 	}
 }
