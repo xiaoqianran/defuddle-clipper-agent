@@ -114,11 +114,6 @@
     }
   }
 
-  function enableFollow(): void {
-    followBrowser = !followBrowser
-    if (followBrowser) void refresh()
-  }
-
   onMount(() => {
     void refresh()
     const timer = window.setInterval(() => void refresh(), 1000)
@@ -146,7 +141,7 @@
 
     <div class="top-actions">
       <label class="follow-toggle">
-        <input type="checkbox" bind:checked={followBrowser} on:change={enableFollow} />
+        <input type="checkbox" bind:checked={followBrowser} />
         <span>Follow Browser</span>
       </label>
       <button class="icon-button" on:click={() => void refresh()} title="Refresh">↻</button>
@@ -248,9 +243,7 @@
         </section>
       {/if}
       {#if view && !view.note && !analysisText}
-        <div class="empty small side-empty">
-          This page is archived. AI is disabled or has not processed it yet.
-        </div>
+        <div class="empty small side-empty">This page is archived. AI is disabled or has not processed it yet.</div>
       {:else if !view}
         <div class="empty small side-empty">Select a mirrored page to see its notes and analysis.</div>
       {/if}
