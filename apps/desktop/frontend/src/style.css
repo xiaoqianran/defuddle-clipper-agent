@@ -92,7 +92,13 @@ button { color: inherit; }
 .history-item.selected { background: #26262b; border-color: #3a3a41; }
 .history-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 650; }
 .history-meta { display: flex; justify-content: space-between; gap: 8px; margin-top: 6px; color: #85858f; font-size: 10px; }
-.history-meta span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-meta > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-meta-right { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.history-status { flex: 0 0 auto; color: #6f6f78; font-size: 9px; letter-spacing: .03em; }
+.history-status.pending { color: #e6d08a; font-weight: 650; }
+.history-status.failed { color: #c9898e; }
+.history-status.ok, .history-status.disabled, .history-status.unknown { color: #6f6f78; }
+.history-item.pending .history-title { color: #f0ead2; }
 .history-url { margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #65656f; font-size: 9px; }
 
 .reader-panel { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); background: #19191c; }
@@ -114,6 +120,15 @@ button { color: inherit; }
 }
 
 .insights-title { position: sticky; top: 0; z-index: 2; background: #161619; border-bottom: 1px solid #29292d; padding-bottom: 12px; }
+.text-button {
+  border: 1px solid #34343a; background: #1d1d21; border-radius: 8px; cursor: pointer;
+  padding: 5px 10px; color: #c8c8ce; font-size: 11px;
+}
+.text-button:hover { background: #28282d; }
+.text-button:disabled { opacity: .5; cursor: default; }
+.analyzing {
+  padding: 12px 16px 0; color: #e6d08a; font-size: 12px; letter-spacing: .02em;
+}
 .insight-section { padding: 15px 15px 20px; border-bottom: 1px solid #29292d; }
 .insight-section h3 { margin: 0 0 10px; color: #9d9da7; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
 .note-text, .analysis-text {

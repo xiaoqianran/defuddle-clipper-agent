@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte'
 
+  type AIStatus = 'pending' | 'ok' | 'failed' | 'disabled' | 'unknown'
+
   type CaptureSummary = {
     captureId: string
     capturedAt: string
@@ -10,6 +12,7 @@
     language?: string
     hasAnalysis: boolean
     hasNote: boolean
+    aiStatus?: AIStatus | string
   }
 
   type BrowserState = {
@@ -36,6 +39,7 @@
     sourceMarkdown: string
     analysis?: unknown
     note?: string
+    aiStatus?: AIStatus | string
   }
 
   let captures: CaptureSummary[] = []
@@ -48,14 +52,18 @@
   let error = ''
   let loading = false
   let refreshing = false
+  let reprocessing = false
   let readerMode: 'content' | 'transcript' = 'content'
+  let seenStatusKey = ''
 
   $: normalizedQuery = query.trim().toLowerCase()
   $: filteredCaptures = normalizedQuery
     ? captures.filter(item => `${item.title} ${item.url} ${item.site ?? ''}`.toLowerCase().includes(normalizedQuery))
     : captures
   $: transcript = typeof view?.packet?.media?.transcript === 'string' ? String(view.packet.media.transcript) : ''
-  $: analysisText = view?.analysis ? JSON.stringify(view.analysis, null, 2) : ''
+  $: analysisText = view?.aiStatus === 'ok' && view?.analysis ? JSON.stringify(view.analysis, null, 2) : ''
+  $: aiStatus = view?.aiStatus ?? ''
+  $: canReprocess = Boolean(view && (aiStatus === 'ok' || aiStatus === 'failed'))
 
   function api(): any {
     return (window as any).go?.main?.App
@@ -71,16 +79,23 @@
     try { return new URL(value).hostname } catch { return value }
   }
 
-  async function loadCapture(captureId: string, manual = true): Promise<void> {
-    if (!captureId || (captureId === selectedId && view)) return
+  function statusKey(aiStatus?: string, hasAnalysis?: boolean): string {
+    return `${aiStatus ?? ''}:${hasAnalysis ? '1' : '0'}`
+  }
+
+  async function loadCapture(captureId: string, manual = true, force = false): Promise<void> {
+    if (!captureId || (!force && captureId === selectedId && view)) return
     if (manual) followBrowser = false
-    loading = true
+    const switching = captureId !== selectedId || !view
+    if (switching) loading = true
     error = ''
     try {
       const next = await api().ReadCapture(captureId) as CaptureView
       selectedId = captureId
       view = next
-      readerMode = 'content'
+      const item = captures.find(entry => entry.captureId === captureId)
+      seenStatusKey = item ? statusKey(item.aiStatus, item.hasAnalysis) : statusKey(next.aiStatus, Boolean(next.analysis))
+      if (switching) readerMode = 'content'
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause)
     } finally {
@@ -98,6 +113,13 @@
       connected = true
       error = ''
 
+      if (selectedId && view) {
+        const item = captures.find(entry => entry.captureId === selectedId)
+        if (item && statusKey(item.aiStatus, item.hasAnalysis) !== seenStatusKey) {
+          await loadCapture(selectedId, false, true)
+        }
+      }
+
       if (followBrowser && browser.active && browser.page.url) {
         const match = captures.find(item => item.url === browser.page.url)
         if (match && match.captureId !== selectedId) {
@@ -111,6 +133,23 @@
       error = cause instanceof Error ? cause.message : String(cause)
     } finally {
       refreshing = false
+    }
+  }
+
+  async function reprocess(): Promise<void> {
+    if (!selectedId || reprocessing) return
+    reprocessing = true
+    error = ''
+    try {
+      await api().ReprocessCapture(selectedId)
+      captures = captures.map(item => item.captureId === selectedId
+        ? { ...item, aiStatus: 'pending', hasAnalysis: false }
+        : item)
+      await loadCapture(selectedId, false, true)
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause)
+    } finally {
+      reprocessing = false
     }
   }
 
@@ -170,13 +209,19 @@
           {#each filteredCaptures as item (item.captureId)}
             <button
               class:selected={item.captureId === selectedId}
+              class:pending={item.aiStatus === 'pending'}
               class="history-item"
               on:click={() => void loadCapture(item.captureId, true)}
             >
               <div class="history-title">{item.title || 'Untitled'}</div>
               <div class="history-meta">
                 <span>{item.site || host(item.url)}</span>
-                <time>{formatTime(item.capturedAt)}</time>
+                <span class="history-meta-right">
+                  {#if item.aiStatus}
+                    <span class="history-status {item.aiStatus}">{item.aiStatus}</span>
+                  {/if}
+                  <time>{formatTime(item.capturedAt)}</time>
+                </span>
               </div>
               <div class="history-url">{item.url}</div>
             </button>
@@ -229,7 +274,15 @@
           <h2>AI / Notes</h2>
           <span>derived, optional</span>
         </div>
+        {#if canReprocess}
+          <button class="text-button" disabled={reprocessing} on:click={() => void reprocess()}>
+            {reprocessing ? 'Reprocessing…' : 'Reprocess'}
+          </button>
+        {/if}
       </div>
+      {#if aiStatus === 'pending'}
+        <div class="analyzing">Analyzing…</div>
+      {/if}
       {#if view?.note}
         <section class="insight-section">
           <h3>Note</h3>
@@ -242,7 +295,7 @@
           <pre class="analysis-text">{analysisText}</pre>
         </section>
       {/if}
-      {#if view && !view.note && !analysisText}
+      {#if view && aiStatus !== 'pending' && !view.note && !analysisText}
         <div class="empty small side-empty">This page is archived. AI is disabled or has not processed it yet.</div>
       {:else if !view}
         <div class="empty small side-empty">Select a mirrored page to see its notes and analysis.</div>
