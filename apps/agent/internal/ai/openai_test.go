@@ -3,6 +3,8 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -133,7 +135,9 @@ func TestAnalyzeTextOnlyKeepsStringContent(t *testing.T) {
 func TestAnalyzeIncludesImageURLForHTTPSCover(t *testing.T) {
 	const cover = "https://cdn.example.com/cover.jpg"
 	var posted []byte
+	requests := 0
 	client, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		requests++
 		var err error
 		posted, err = io.ReadAll(r.Body)
 		if err != nil {
@@ -148,6 +152,9 @@ func TestAnalyzeIncludesImageURLForHTTPSCover(t *testing.T) {
 	}
 	if !analysis.Provenance.ImageSent {
 		t.Fatal("expected imageSent provenance")
+	}
+	if analysis.Provenance.ImageSkipped != "" {
+		t.Fatalf("unexpected imageSkipped: %q", analysis.Provenance.ImageSkipped)
 	}
 
 	req := decodePostedChat(t, posted)
@@ -173,6 +180,9 @@ func TestAnalyzeIncludesImageURLForHTTPSCover(t *testing.T) {
 	}
 	if !sawText || !sawImage {
 		t.Fatalf("expected text and image_url parts, got %+v", parts)
+	}
+	if requests != 1 {
+		t.Fatalf("expected one provider request, got %d", requests)
 	}
 }
 
@@ -362,5 +372,251 @@ func TestProviderHost(t *testing.T) {
 	}
 	if got := providerHost("http://127.0.0.1:8000/v1"); got != "127.0.0.1:8000" {
 		t.Fatalf("unexpected local host: %q", got)
+	}
+}
+
+func writeProviderError(t *testing.T, w http.ResponseWriter, status int, message string) {
+	t.Helper()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(map[string]any{
+		"error": map[string]any{
+			"message": message,
+			"type":    "BadRequestError",
+			"code":    status,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAnalyzeRetriesWithoutImageWhenProviderCannotFetchCover(t *testing.T) {
+	const cover = "https://upload.wikimedia.org/wikipedia/commons/cover.jpg"
+	cases := []struct {
+		name    string
+		message string
+	}{
+		{
+			name:    "upstream-403",
+			message: "Failed to fetch media from URL: upstream returned HTTP 403.",
+		},
+		{
+			name:    "upstream-401",
+			message: "Failed to fetch media from URL: upstream returned HTTP 401.",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var posted [][]byte
+			client, server := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				posted = append(posted, body)
+				if len(posted) == 1 {
+					writeProviderError(t, w, http.StatusBadRequest, tc.message)
+					return
+				}
+				writeChatCompletion(t, w, sampleAnalysisJSON)
+			})
+
+			analysis, err := client.Analyze(context.Background(), testPacket(cover))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if analysis.Summary != "A short summary" {
+				t.Fatalf("unexpected summary after retry: %q", analysis.Summary)
+			}
+			if analysis.Provenance.ImageSent {
+				t.Fatal("text-only retry must not report imageSent")
+			}
+			if analysis.Provenance.ImageSkipped != ImageSkippedProviderMediaFetch {
+				t.Fatalf("unexpected imageSkipped: %q", analysis.Provenance.ImageSkipped)
+			}
+			if analysis.Provenance.Model != "google/diffusiongemma-26b-a4b-it" {
+				t.Fatalf("unexpected model: %q", analysis.Provenance.Model)
+			}
+			parsed, err := url.Parse(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if analysis.Provenance.ProviderHost != parsed.Host {
+				t.Fatalf("unexpected provider host: %q", analysis.Provenance.ProviderHost)
+			}
+			if analysis.Provenance.PromptVersion != PromptVersion {
+				t.Fatalf("unexpected prompt version: %q", analysis.Provenance.PromptVersion)
+			}
+
+			if len(posted) != 2 {
+				t.Fatalf("expected one retry, got %d requests", len(posted))
+			}
+			if !strings.Contains(string(posted[0]), "image_url") {
+				t.Fatalf("first request should include image_url:\n%s", posted[0])
+			}
+			if strings.Contains(string(posted[1]), "image_url") {
+				t.Fatalf("retry must omit image_url:\n%s", posted[1])
+			}
+			var content string
+			if err := json.Unmarshal(userContent(t, decodePostedChat(t, posted[1])), &content); err != nil {
+				t.Fatalf("retry user content should be a string: %v\n%s", err, posted[1])
+			}
+			if !strings.Contains(content, "Hello world") {
+				t.Fatalf("retry dropped page text:\n%s", content)
+			}
+
+			raw, err := json.Marshal(analysis)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(raw), "sk-test-secret-key") || strings.Contains(string(raw), "Bearer") {
+				t.Fatalf("analysis leaked API key material:\n%s", raw)
+			}
+		})
+	}
+}
+
+func TestAnalyzeDoesNotRetryOnProvider500(t *testing.T) {
+	requests := 0
+	client, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(body), "image_url") {
+			t.Fatalf("500 path should still send image_url on the only request:\n%s", body)
+		}
+		writeProviderError(t, w, http.StatusInternalServerError, "Failed to fetch media from URL: upstream returned HTTP 403.")
+	})
+
+	_, err := client.Analyze(context.Background(), testPacket("https://cdn.example.com/cover.jpg"))
+	if err == nil {
+		t.Fatal("expected provider 500 to fail analysis")
+	}
+	if !strings.Contains(err.Error(), "provider HTTP 500") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("500 must not retry, got %d requests", requests)
+	}
+}
+
+func TestAnalyzeDoesNotRetryTextOnlyMediaFetchError(t *testing.T) {
+	requests := 0
+	client, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(body), "image_url") {
+			t.Fatalf("text-only packet included image_url:\n%s", body)
+		}
+		writeProviderError(t, w, http.StatusBadRequest, "Failed to fetch media from URL: upstream returned HTTP 403.")
+	})
+
+	_, err := client.Analyze(context.Background(), testPacket(nil))
+	if err == nil {
+		t.Fatal("expected text-only media-fetch error to fail")
+	}
+	if !strings.Contains(err.Error(), "provider HTTP 400") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("text-only media-fetch error must not retry, got %d requests", requests)
+	}
+}
+
+func TestAnalyzeDoesNotRetryOnProvider401Auth(t *testing.T) {
+	requests := 0
+	client, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		writeProviderError(t, w, http.StatusUnauthorized, "Failed to fetch media from URL: upstream returned HTTP 401.")
+	})
+
+	_, err := client.Analyze(context.Background(), testPacket("https://cdn.example.com/cover.jpg"))
+	if err == nil {
+		t.Fatal("expected provider 401 to fail analysis")
+	}
+	if !strings.Contains(err.Error(), "provider HTTP 401") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("401 auth must not retry, got %d requests", requests)
+	}
+}
+
+func TestAnalyzeDoesNotRetryOnJSONDecodeError(t *testing.T) {
+	requests := 0
+	client, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := io.WriteString(w, `{"choices":[{"message":{"content":"not-json"}}]}`); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	_, err := client.Analyze(context.Background(), testPacket("https://cdn.example.com/cover.jpg"))
+	if err == nil {
+		t.Fatal("expected JSON decode error")
+	}
+	if !strings.Contains(err.Error(), "decode analysis JSON") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("JSON decode error must not retry, got %d requests", requests)
+	}
+}
+
+func TestAnalyzeDoesNotRetryOnUnrelated400(t *testing.T) {
+	requests := 0
+	client, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		writeProviderError(t, w, http.StatusBadRequest, "invalid model")
+	})
+
+	_, err := client.Analyze(context.Background(), testPacket("https://cdn.example.com/cover.jpg"))
+	if err == nil {
+		t.Fatal("expected unrelated 400 to fail analysis")
+	}
+	if !strings.Contains(err.Error(), "provider HTTP 400") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("unrelated 400 must not retry, got %d requests", requests)
+	}
+}
+
+func TestIsProviderMediaFetchError(t *testing.T) {
+	nim403 := &providerHTTPError{
+		StatusCode: http.StatusBadRequest,
+		Body:       `{"error":{"message":"Failed to fetch media from URL: upstream returned HTTP 403.","type":"BadRequestError","code":400}}`,
+	}
+	if !isProviderMediaFetchError(nim403) {
+		t.Fatal("expected NVIDIA 400 media-fetch body to match")
+	}
+
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "400-fetch-media", err: &providerHTTPError{StatusCode: 400, Body: "could not fetch media"}, want: true},
+		{name: "400-failed-media", err: &providerHTTPError{StatusCode: 400, Body: "Failed media download"}, want: true},
+		{name: "422-upstream-401", err: &providerHTTPError{StatusCode: 422, Body: "upstream returned HTTP 401"}, want: true},
+		{name: "401-auth", err: &providerHTTPError{StatusCode: 401, Body: "Failed to fetch media from URL: upstream returned HTTP 401."}, want: false},
+		{name: "500", err: &providerHTTPError{StatusCode: 500, Body: "Failed to fetch media from URL: upstream returned HTTP 403."}, want: false},
+		{name: "400-unrelated", err: &providerHTTPError{StatusCode: 400, Body: "invalid model"}, want: false},
+		{name: "timeout", err: errors.New("context deadline exceeded"), want: false},
+		{name: "decode", err: fmt.Errorf("decode provider response: %w", errors.New("invalid character")), want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isProviderMediaFetchError(tc.err); got != tc.want {
+				t.Fatalf("isProviderMediaFetchError(%v)=%v want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }

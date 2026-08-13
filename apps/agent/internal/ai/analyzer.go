@@ -30,11 +30,17 @@ type Provenance struct {
 	ProviderHost  string `json:"providerHost"`
 	PromptVersion string `json:"promptVersion"`
 	ImageSent     bool   `json:"imageSent"`
+	ImageSkipped  string `json:"imageSkipped,omitempty"`
 	AnalyzedAt    string `json:"analyzedAt"`
 }
 
-// PromptVersion is bumped when the analysis system prompt changes.
-const PromptVersion = "dca-analysis-v1"
+// ImageSkippedProviderMediaFetch records that a usable cover image was omitted
+// after the provider failed to fetch it (for example Wikimedia 403 / CDN 401).
+const (
+	ImageSkippedProviderMediaFetch = "provider-media-fetch"
+	// PromptVersion is bumped when the analysis system prompt changes.
+	PromptVersion = "dca-analysis-v1"
+)
 
 type Analyzer interface {
 	Analyze(context.Context, protocol.ContentPacket) (Analysis, error)
