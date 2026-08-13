@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -20,6 +21,22 @@ type OpenAICompatible struct {
 	model      string
 	chunkChars int
 	client     *http.Client
+	now        func() time.Time
+}
+
+type chatMessage struct {
+	Role    string `json:"role"`
+	Content any    `json:"content"`
+}
+
+type contentPart struct {
+	Type     string        `json:"type"`
+	Text     string        `json:"text,omitempty"`
+	ImageURL *imageURLPart `json:"image_url,omitempty"`
+}
+
+type imageURLPart struct {
+	URL string `json:"url"`
 }
 
 func NewOpenAICompatible(baseURL, apiKey, model string, chunkChars int, timeout time.Duration) *OpenAICompatible {
@@ -29,6 +46,7 @@ func NewOpenAICompatible(baseURL, apiKey, model string, chunkChars int, timeout 
 		model:      model,
 		chunkChars: chunkChars,
 		client:     &http.Client{Timeout: timeout},
+		now:        func() time.Time { return time.Now().UTC() },
 	}
 }
 
@@ -37,40 +55,51 @@ func (c *OpenAICompatible) Analyze(ctx context.Context, packet protocol.ContentP
 	if len(chunks) == 0 {
 		return Analysis{}, errors.New("empty Markdown")
 	}
-	if len(chunks) == 1 {
-		return c.analyzeText(ctx, packet.Source.Title, packet.Source.URL, chunks[0],
-			"Analyze the complete captured page.")
-	}
 
-	partials := make([]Analysis, 0, len(chunks))
-	for i, chunk := range chunks {
-		partial, err := c.analyzeText(
+	imageURL := usableCoverImageURL(packet)
+	var analysis Analysis
+	var err error
+	if len(chunks) == 1 {
+		analysis, err = c.analyzeText(ctx, packet.Source.Title, packet.Source.URL, chunks[0],
+			"Analyze the complete captured page.", imageURL)
+	} else {
+		partials := make([]Analysis, 0, len(chunks))
+		for i, chunk := range chunks {
+			partial, chunkErr := c.analyzeText(
+				ctx,
+				packet.Source.Title,
+				packet.Source.URL,
+				chunk,
+				fmt.Sprintf("This is chunk %d of %d. Summarize only information supported by this chunk.", i+1, len(chunks)),
+				imageURL,
+			)
+			if chunkErr != nil {
+				return Analysis{}, fmt.Errorf("analyze chunk %d/%d: %w", i+1, len(chunks), chunkErr)
+			}
+			partials = append(partials, partial)
+		}
+
+		raw, marshalErr := json.Marshal(partials)
+		if marshalErr != nil {
+			return Analysis{}, marshalErr
+		}
+		analysis, err = c.analyzeText(
 			ctx,
 			packet.Source.Title,
 			packet.Source.URL,
-			chunk,
-			fmt.Sprintf("This is chunk %d of %d. Summarize only information supported by this chunk.", i+1, len(chunks)),
+			string(raw),
+			"Synthesize the following JSON analyses of consecutive chunks into one non-redundant page-level analysis. Do not invent facts not present in the chunk analyses.",
+			"",
 		)
-		if err != nil {
-			return Analysis{}, fmt.Errorf("analyze chunk %d/%d: %w", i+1, len(chunks), err)
-		}
-		partials = append(partials, partial)
 	}
-
-	raw, err := json.Marshal(partials)
 	if err != nil {
 		return Analysis{}, err
 	}
-	return c.analyzeText(
-		ctx,
-		packet.Source.Title,
-		packet.Source.URL,
-		string(raw),
-		"Synthesize the following JSON analyses of consecutive chunks into one non-redundant page-level analysis. Do not invent facts not present in the chunk analyses.",
-	)
+	c.attachProvenance(&analysis, imageURL != "")
+	return analysis, nil
 }
 
-func (c *OpenAICompatible) analyzeText(ctx context.Context, title, sourceURL, content, instruction string) (Analysis, error) {
+func (c *OpenAICompatible) analyzeText(ctx context.Context, title, sourceURL, content, instruction, imageURL string) (Analysis, error) {
 	system := `You are a precise knowledge extraction engine.
 Return ONLY one valid JSON object with exactly this semantic shape:
 {
@@ -93,11 +122,8 @@ Keep tags concise. Arrays may be empty.`
 	)
 
 	reqBody := map[string]any{
-		"model": c.model,
-		"messages": []map[string]string{
-			{"role": "system", "content": system},
-			{"role": "user", "content": user},
-		},
+		"model":       c.model,
+		"messages":    []chatMessage{systemMessage(system), userMessage(user, imageURL)},
 		"temperature": 0.2,
 	}
 	encoded, err := json.Marshal(reqBody)
@@ -142,7 +168,78 @@ Keep tags concise. Arrays may be empty.`
 		return Analysis{}, errors.New("provider returned no message content")
 	}
 
-	text := stripCodeFence(envelope.Choices[0].Message.Content)
+	return decodeAnalysisJSON(envelope.Choices[0].Message.Content)
+}
+
+func systemMessage(text string) chatMessage {
+	return chatMessage{Role: "system", Content: text}
+}
+
+func userMessage(text, imageURL string) chatMessage {
+	if imageURL == "" {
+		return chatMessage{Role: "user", Content: text}
+	}
+	return chatMessage{
+		Role: "user",
+		Content: []contentPart{
+			{Type: "text", Text: text},
+			{Type: "image_url", ImageURL: &imageURLPart{URL: imageURL}},
+		},
+	}
+}
+
+func usableCoverImageURL(packet protocol.ContentPacket) string {
+	if packet.Metadata == nil {
+		return ""
+	}
+	raw, ok := packet.Metadata["image"]
+	if !ok || raw == nil {
+		return ""
+	}
+	value, ok := raw.(string)
+	if !ok {
+		return ""
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if strings.HasPrefix(strings.ToLower(value), "data:") {
+		return ""
+	}
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return ""
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return ""
+	}
+	if parsed.Host == "" {
+		return ""
+	}
+	return value
+}
+
+func (c *OpenAICompatible) attachProvenance(analysis *Analysis, imageSent bool) {
+	analysis.Provenance = Provenance{
+		Model:         c.model,
+		ProviderHost:  providerHost(c.baseURL),
+		PromptVersion: PromptVersion,
+		ImageSent:     imageSent,
+		AnalyzedAt:    c.now().Format(time.RFC3339),
+	}
+}
+
+func providerHost(baseURL string) string {
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	return parsed.Host
+}
+
+func decodeAnalysisJSON(text string) (Analysis, error) {
+	text = extractFirstJSONObject(stripCodeFence(strings.TrimSpace(text)))
 	var analysis Analysis
 	if err := json.Unmarshal([]byte(text), &analysis); err != nil {
 		return Analysis{}, fmt.Errorf("decode analysis JSON: %w", err)
@@ -158,6 +255,47 @@ func stripCodeFence(text string) string {
 	lines := strings.Split(text, "\n")
 	if len(lines) >= 3 && strings.HasPrefix(lines[0], "```") && strings.TrimSpace(lines[len(lines)-1]) == "```" {
 		return strings.TrimSpace(strings.Join(lines[1:len(lines)-1], "\n"))
+	}
+	return text
+}
+
+func extractFirstJSONObject(text string) string {
+	text = strings.TrimSpace(text)
+	start := strings.IndexByte(text, '{')
+	if start < 0 {
+		return text
+	}
+
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(text); i++ {
+		ch := text[i]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if ch == '\\' {
+				escaped = true
+				continue
+			}
+			if ch == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch ch {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return strings.TrimSpace(text[start : i+1])
+			}
+		}
 	}
 	return text
 }
